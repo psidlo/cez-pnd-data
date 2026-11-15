@@ -39,6 +39,14 @@ Archive extraction found no deployable source-level fix for the DIP token: local
 
 Candidate split: `feat/pnd-archive-core` (standalone SQLite schema/projection, quality/DST regression tests), then separate `feat/pnd-archive-backfill` (fetch scheduling and backfill), then separate `feat/pnd-archive-addon-wiring` (optional config and runtime integration). Because there is no independently usable core import in the upstream currently, do not file an unconnected production PR as finished until dependencies and compatibility are resolved.
 
+## Implemented in our fork (2026-11-15)
+
+- [Draft PR #1 — Playwright HDO timeout classification](https://github.com/psidlo/cez-pnd-data/pull/1): a small two-file fix adding explicit Playwright timeout handling and a focused regression test. **Not** a fix for token availability.
+- [Draft PR #2 — independent SQLite archive core](https://github.com/psidlo/cez-pnd-data/pull/2): exactly two public source/test files, fully reviewed against the attached local backup, synthetic fixtures only. Storage and schema projection, correction of next-day literal midnight, guarded migration of the known legacy SQLite view without touching stored measurements. Deliberately **excludes** backfill scheduling, fetching and HA runtime wiring.
+- Draft PR #2: 7 isolated synthetic tests passed with Python 3.13; compilation and restricted-content checks passed. **Full original CI matrix not yet verified; GitHub workflow runs have not been reported.** The code was not installed or run inside HA.
+- Source file hashes were checked after GitHub upload against the locally reviewed byte-for-byte files; public branch contains no real household identifiers, network addresses, credentials or captured measurement data.
+- Follow-up candidates: `feat/pnd-archive-backfill` then `feat/pnd-archive-addon-wiring`; the latter must preserve default upstream behavior and compatibility. If upstream prefers one functional PR, prepare a combined review without losing separable commits.
+
 ## Track A — HDO token regression (priority)
 
 Observed in the running v0.4.8 add-on after successful DIP login on 2026-11-15:
