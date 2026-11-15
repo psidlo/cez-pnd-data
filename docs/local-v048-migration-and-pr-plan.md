@@ -64,6 +64,16 @@ Candidate split: `feat/pnd-archive-core` (standalone SQLite schema/projection, q
 - **Security:** Public source/tests use synthetic identifiers only; no real EAN, meter numbers, private IPs, cookies, tokens, raw API response dumps or database snapshots were added. Existing upstream fetcher logs unredacted response excerpts in some error cases; do not enable production historical fetching without a separate review of error-path privacy and retry/rejection handling.
 - **Operations:** No HA add-on rebuild/restart/configuration change, no SQLite write, no inverter control changes. All GitHub PRs remain private-to-our-workflow drafts in a **public fork**, not submitted upstream.
 
+## PND error-response privacy and rejection cooldown — draft PR #5 (2026-11-15)
+
+- [Draft PR #5 — redact error responses and back off on portal rejection](https://github.com/psidlo/cez-pnd-data/pull/5) is **independent** against upstream `main`, not stacked onto archives or historical fetch.
+- Public diff: 3 files (`addon/src/main.py`, `addon/src/pnd_response_safety.py`, `tests/test_pnd_response_privacy.py`). No source backup, production credentials, actual meter/EAN IDs, response bodies, network addresses or SQLite file was committed.
+- It removes logging of untrusted HTTP response bodies, raw Content-Type and JSON parsing exception details. Error classification uses fixed labels: `portal-rejection`, `login-page`, `maintenance`, `other-html`. HTTP 403/429 and recognized HTML WAF rejection trigger `PndRequestRejected` and a 12-hour **in-process only** cooldown. A rejection immediately aborts the assembly batch and fallback, while non-rejection assembly failures remain best-effort; successful JSON remains compatible.
+- Offline local tests with synthetic mocked responses: **12 passed**. Validated error privacy, status classification, batch early-abort, cooldown and normal JSON. **GitHub Actions: no runs observed; full upstream CI and exact published source test are outstanding.**
+- The patch fixes response-error logging only, not all potential PII in pre-existing startup logs or other code paths; a separate application-wide logging review is warranted before deployment.
+- Neither PR #5 nor PR #4, #3, #2, #1 has been deployed or submitted upstream. Running HA add-on, databases, MQTT, Predbat and SolaX untouched.
+- Follow-up: compatibility review between #5 and #4, then optional HA runtime wiring as its own PR, only after tests. The actual DIP HDO token-acquisition root cause still requires a separately approved redacted live diagnosis.
+
 ## Track A — HDO token regression (priority)
 
 Observed in the running v0.4.8 add-on after successful DIP login on 2026-11-15:
