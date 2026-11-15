@@ -19,13 +19,13 @@ import paho.mqtt.client as mqtt_client
 from .auth import DEFAULT_USER_AGENT, PND_BASE_URL, PlaywrightAuthClient
 from .dip_client import DipClient
 from .mqtt_publisher import MqttPublisher
+from .orchestrator import Orchestrator, OrchestratorConfig, SessionExpiredError
 from .pnd_response_safety import (
     REJECTION_COOLDOWN_SECONDS,
     REJECTION_STATUS_CODES,
     safe_content_kind,
     safe_html_category,
 )
-from .orchestrator import Orchestrator, OrchestratorConfig, SessionExpiredError
 from .session_manager import CredentialsProvider, SessionStore
 
 PND_DATA_URL = "https://pnd.cezdistribuce.cz/cezpnd2/external/data"
@@ -363,10 +363,12 @@ class PndFetcher:
                 "PND JSON response is not an object", status_code=status
             )
         indicator = data.get("hasData")
-        safe_indicator = (
-            "true" if indicator is True else "false" if indicator is False
-            else "unknown"
-        )
+        if indicator is True:
+            safe_indicator = "true"
+        elif indicator is False:
+            safe_indicator = "false"
+        else:
+            safe_indicator = "unknown"
         logger.debug(
             "PND fetch assembly=%d status=%d hasData=%s",
             assembly_id,
