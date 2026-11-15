@@ -37,7 +37,8 @@ def test_fixed_response_categories_hide_untrusted_headers_and_bodies():
     assert safe_content_kind("application/json; token=" + PRIVATE) == "json"
     assert safe_content_kind(None) == "unknown"
     assert safe_html_category("Request Rejected " + PRIVATE) == "portal-rejection"
-    assert safe_html_category('<input name="username" value="' + PRIVATE) == "login-page"
+    login_html = '<input name="username" value="' + PRIVATE
+    assert safe_html_category(login_html) == "login-page"
     assert safe_html_category("Odstávka " + PRIVATE) == "maintenance"
     assert PRIVATE not in safe_html_category(PRIVATE)
 
