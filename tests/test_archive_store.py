@@ -159,3 +159,69 @@ def test_unknown_existing_view_is_not_overwritten(tmp_path):
         assert db.execute(
             "SELECT custom_value FROM pnd_combined_15m"
         ).fetchone() == (42,)
+
+
+def test_profile_mismatch_logging_never_exposes_requested_or_observed_meter(
+    tmp_path, caplog
+):
+    import logging
+
+    requested = "SYNTHETIC_REQUESTED_PRIVATE"
+    observed = "SYNTHETIC_OBSERVED_PRIVATE"
+    columns = [
+        {"id": "t", "name": "Datum"},
+        {"id": "i", "name": "+A/" + observed},
+        {"id": "e", "name": "-A/" + observed},
+    ]
+    payload = {
+        "profile_all": {
+            "hasData": True,
+            "columns": columns,
+            "values": [reading("15.11.2026 00:00")],
+        }
+    }
+    store = ArchiveStore(tmp_path / "private.sqlite3")
+    try:
+        with caplog.at_level(logging.WARNING):
+            store.save_day(
+                requested,
+                date(2026, 11, 14),
+                CONFIG,
+                payload,
+                "SYNTHETIC_IMPORT_EAN",
+                "SYNTHETIC_EXPORT_EAN",
+            )
+        assert "meter mismatch" in caplog.text
+        assert requested not in caplog.text
+        assert observed not in caplog.text
+        assert "SYNTHETIC_IMPORT_EAN" not in caplog.text
+    finally:
+        store.close()
+
+
+def test_unrecognized_columns_logging_never_exposes_meter(tmp_path, caplog):
+    import logging
+
+    private_meter = "SYNTHETIC_METER_PRIVATE"
+    payload = {
+        "profile_all": {
+            "hasData": True,
+            "columns": [{"id": "t", "name": "Datum"}],
+            "values": [reading("15.11.2026 00:00")],
+        }
+    }
+    store = ArchiveStore(tmp_path / "unknown.sqlite3")
+    try:
+        with caplog.at_level(logging.WARNING):
+            store.save_day(
+                private_meter,
+                date(2026, 11, 14),
+                CONFIG,
+                payload,
+                "SYNTHETIC_IMPORT_EAN",
+                "SYNTHETIC_EXPORT_EAN",
+            )
+        assert "unrecognized profile columns" in caplog.text
+        assert private_meter not in caplog.text
+    finally:
+        store.close()
