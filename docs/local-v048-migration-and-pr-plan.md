@@ -55,6 +55,15 @@ Candidate split: `feat/pnd-archive-core` (standalone SQLite schema/projection, q
 - The original 0.4.8 implementation is used as behavioral reference but **no original private configuration, database, credential/session state, or backup files** were uploaded. The running local add-on was not modified.
 - Next: run broader Python compatibility checks, review archive-core/backfill interfaces before optional HA wiring, and independently diagnose the unresolved HDO token behavior. No production deployment or upstream submission authorized.
 
+## Historical fetch contract — draft PR #4 (2026-11-15)
+
+- [Draft PR #4 — explicit historical PND fetch window](https://github.com/psidlo/cez-pnd-data/pull/4) is **independent**, based directly on upstream `main`. It contains 4 files: a small change to `PndFetcher.fetch_all`, a pure historical window function and two synthetic regression suites. It does **not** import or depend on archive core or backfill.
+- Historical mode requests the chosen day and includes the next calendar day's 00:00 profile endpoint; the other assemblies remain bounded at 23:59. It preserves valid `hasData=False` results, disables inappropriate yesterday fallback and propagates errors for caller cooldown. The unmodified live/default path preserves the original window selection.
+- Offline tests: **20/20 passed for historical window and mocked-browser fetching**, plus **20/20 from archive core + backfill** in the combined local test environment (Python 3.13); **40/40 synthetic tests passed**. Full GitHub Actions and Python 3.9–3.12 matrix not yet run. Tests ran against a locally adapted active fetcher; the published upstream-derived code needs its exact repository CI validation before upstream submission.
+- **Dependency correction:** draft backfill PR #3 requires this historical interface, which is not present in upstream nor Honza's fork. The next optional HA wiring PR should be prepared only after the dependency is reconciled. PR #4 can be reviewed upstream independently.
+- **Security:** Public source/tests use synthetic identifiers only; no real EAN, meter numbers, private IPs, cookies, tokens, raw API response dumps or database snapshots were added. Existing upstream fetcher logs unredacted response excerpts in some error cases; do not enable production historical fetching without a separate review of error-path privacy and retry/rejection handling.
+- **Operations:** No HA add-on rebuild/restart/configuration change, no SQLite write, no inverter control changes. All GitHub PRs remain private-to-our-workflow drafts in a **public fork**, not submitted upstream.
+
 ## Track A — HDO token regression (priority)
 
 Observed in the running v0.4.8 add-on after successful DIP login on 2026-11-15:
