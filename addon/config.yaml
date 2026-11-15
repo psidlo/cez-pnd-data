@@ -9,7 +9,7 @@ arch:
 startup: services
 boot: auto
 services:
-  - "mqtt:need"
+  - "mqtt:want"
 options:
   email: ""
   password: ""
@@ -18,7 +18,14 @@ options:
   electrometers: "[]"
   archive_enabled: false
   archive_start_date: ""
-  archive_max_days_per_cycle: 1
+  archive_days_per_cycle: 1
+  archive_meter_ids: "[]"
+  import_ean: ""
+  export_ean: ""
+  mqtt_host: ""
+  mqtt_port: 1883
+  mqtt_user: ""
+  mqtt_password: ""
 schema:
   email: str
   password: password
@@ -27,6 +34,13 @@ schema:
   electrometers: str?
   archive_enabled: bool
   archive_start_date: str?
-  archive_max_days_per_cycle: int(1,62)
+  archive_days_per_cycle: int(1,62)
+  archive_meter_ids: str?
+  import_ean: str?
+  export_ean: str?
+  mqtt_host: str?
+  mqtt_port: port
+  mqtt_user: str?
+  mqtt_password: password
 map:
   - "share:rw"
