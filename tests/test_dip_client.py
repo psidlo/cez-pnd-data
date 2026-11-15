@@ -5,6 +5,7 @@ import json
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from addon.src.dip_client import (
     DipClient,
@@ -76,6 +77,17 @@ async def test_fetch_hdo_returns_data_field():
 @pytest.mark.asyncio
 async def test_fetch_hdo_token_not_found_in_local_storage():
     page = _mock_page(wait_for_function_error=asyncio.TimeoutError())
+    context = _mock_context(page)
+
+    with pytest.raises(DipTokenError, match="Token not found in localStorage"):
+        await DipClient().fetch_hdo(context, ean="123")
+
+    page.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_fetch_hdo_playwright_timeout_is_token_error():
+    page = _mock_page(wait_for_function_error=PlaywrightTimeoutError("Timeout 30000ms exceeded"))
     context = _mock_context(page)
 
     with pytest.raises(DipTokenError, match="Token not found in localStorage"):
