@@ -11,6 +11,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from typing import Any, Dict, List, Optional
 
 import paho.mqtt.client as mqtt_client
@@ -18,6 +19,12 @@ import paho.mqtt.client as mqtt_client
 from .auth import DEFAULT_USER_AGENT, PND_BASE_URL, PlaywrightAuthClient
 from .dip_client import DipClient
 from .mqtt_publisher import MqttPublisher
+from .pnd_response_safety import (
+    REJECTION_COOLDOWN_SECONDS,
+    REJECTION_STATUS_CODES,
+    safe_content_kind,
+    safe_html_category,
+)
 from .orchestrator import Orchestrator, OrchestratorConfig, SessionExpiredError
 from .session_manager import CredentialsProvider, SessionStore
 
@@ -30,6 +37,10 @@ class PndFetchError(Exception):
     def __init__(self, message: str, status_code: Optional[int] = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+class PndRequestRejected(PndFetchError):
+    """CEZ PND rejected a request; temporarily avoid further requests."""
 
 
 # Configure logging
@@ -66,6 +77,23 @@ def build_pnd_payload(
 class PndFetcher:
     def __init__(self, electrometer_id: Optional[str] = None) -> None:
         self._electrometer_id = electrometer_id
+        self._blocked_until_monotonic = 0.0
+
+    @property
+    def cooldown_seconds_remaining(self) -> float:
+        """Remaining in-process cooldown; do not share raw identifiers."""
+        return max(0.0, self._blocked_until_monotonic - time.monotonic())
+
+    def _begin_rejection_backoff(self) -> None:
+        self._blocked_until_monotonic = max(
+            self._blocked_until_monotonic,
+            time.monotonic() + REJECTION_COOLDOWN_SECONDS,
+        )
+        logger.warning("PND request rejected; pausing PND requests for 12 hours")
+
+    def _check_rejection_backoff(self) -> None:
+        if self.cooldown_seconds_remaining > 0:
+            raise PndRequestRejected("PND rejection cooldown active")
 
     @staticmethod
     async def _create_browser_context(browser: Any) -> Any:
@@ -85,6 +113,7 @@ class PndFetcher:
         date_to: str,
         electrometer_id: str | None = None,
     ) -> Dict[str, Any]:
+        self._check_rejection_backoff()
         async_playwright = _get_async_playwright()
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
@@ -104,7 +133,7 @@ class PndFetcher:
                     await page.close()
                     await asyncio.sleep(3)
                 except Exception as e:
-                    logger.debug("PND dashboard navigation failed (non-fatal): %s", e)
+                    logger.debug("PND dashboard navigation failed (details suppressed)")
 
                 effective_electrometer_id = electrometer_id or self._electrometer_id
 
@@ -128,7 +157,7 @@ class PndFetcher:
                         "Warmup status: %d (expected 400)", warmup_response.status
                     )
                 except Exception as e:
-                    logger.debug("Warmup failed: %s (expected)", e)
+                    logger.debug("Warmup failed (details suppressed)")
 
                 await asyncio.sleep(1)
 
@@ -157,6 +186,7 @@ class PndFetcher:
         """
         from datetime import datetime, timedelta
 
+        self._check_rejection_backoff()
         today = datetime.now()
         date_from = today.strftime("%d.%m.%Y 00:00")
         date_to = today.strftime("%d.%m.%Y 23:59")
@@ -177,7 +207,7 @@ class PndFetcher:
                     )
                     await page.close()
                 except Exception as e:
-                    logger.debug("PND navigation warmup failed (non-fatal): %s", e)
+                    logger.debug("PND navigation warmup failed (details suppressed)")
 
                 # Single WAF warmup POST using the first assembly
                 first_config = assembly_configs[0]
@@ -198,7 +228,7 @@ class PndFetcher:
                         "Warmup status: %d (expected 400)", warmup_response.status
                     )
                 except Exception as e:
-                    logger.debug("Warmup POST failed: %s (expected)", e)
+                    logger.debug("Warmup POST failed (details suppressed)")
 
                 await asyncio.sleep(1)
 
@@ -212,12 +242,12 @@ class PndFetcher:
                         payload = await self._fetch_one_in_context(
                             context, meter_id, assembly_id, date_from, date_to
                         )
-                    except Exception as e:
+                    except PndRequestRejected:
+                        raise  # Do not request further assemblies after rejection.
+                    except Exception:
                         logger.error(
-                            "Assembly %s failed for meter %s: %s — continuing",
+                            "Assembly %s failed (details suppressed) — continuing",
                             assembly_name,
-                            meter_id,
-                            e,
                         )
                         continue
 
@@ -238,12 +268,13 @@ class PndFetcher:
                                 yesterday_from,
                                 date_from,
                             )
-                        except Exception as e:
+                        except PndRequestRejected:
+                            raise
+                        except Exception:
                             logger.error(
-                                "Assembly %s yesterday-fallback failed for meter %s: %s",
+                                "Assembly %s yesterday-fallback failed "
+                                "(details suppressed)",
                                 assembly_name,
-                                meter_id,
-                                e,
                             )
                             continue
 
@@ -273,53 +304,74 @@ class PndFetcher:
         payload = build_pnd_payload(assembly_id, date_from, date_to, meter_id)
         form_payload = {k: ("" if v is None else v) for k, v in payload.items()}
 
+        self._check_rejection_backoff()
         response = await context.request.post(PND_DATA_URL, data=form_payload)
-
-        if response.status == 302:
-            raise SessionExpiredError("PND fetch redirected (302) - session expired")
-        if response.status != 200:
+        status = response.status
+        if type(status) is not int or not (100 <= status <= 599):
+            raise PndFetchError("PND response has invalid HTTP status")
+        if status in (302, 401):
+            raise SessionExpiredError(f"PND session expired (HTTP {status})")
+        if status in REJECTION_STATUS_CODES:
+            self._begin_rejection_backoff()
+            raise PndRequestRejected(
+                f"PND portal rejected request (HTTP {status})",
+                status_code=status,
+            )
+        if status != 200:
             raise PndFetchError(
-                f"PND fetch failed with status {response.status}",
-                status_code=response.status,
+                f"PND fetch failed with status {status}", status_code=status
             )
 
-        headers_dict = response.headers or {}
-        content_type = (
-            headers_dict.get("content-type", "") if hasattr(headers_dict, "get") else ""
-        )
-        if "application/json" not in content_type.lower():
-            try:
-                text = await response.text()
-            except Exception:
-                text = "(body unavailable)"
+        headers = response.headers or {}
+        content_type = headers.get("content-type") if hasattr(headers, "get") else None
+        kind = safe_content_kind(content_type)
+        if kind != "json":
+            category = "not-html"
+            if kind == "html":
+                try:
+                    category = safe_html_category(await response.text())
+                except Exception:
+                    category = "unknown"
+                if category == "portal-rejection":
+                    self._begin_rejection_backoff()
+                    raise PndRequestRejected(
+                        "PND portal rejected request (HTML response)",
+                        status_code=status,
+                    )
+                if category == "login-page":
+                    raise SessionExpiredError("PND fetch returned login page")
             logger.warning(
-                "PND fetch returned non-JSON response (Content-Type: %s): %s",
-                content_type,
-                text[:500] if text else "(empty)",
+                "PND fetch returned non-JSON response (kind=%s, category=%s)",
+                kind,
+                category,
             )
             raise PndFetchError(
-                f"PND fetch returned non-JSON response (Content-Type: {content_type})"
+                f"PND fetch returned non-JSON response "
+                f"(kind={kind}, category={category})",
+                status_code=status,
             )
 
         try:
             data: Dict[str, Any] = await response.json()
-        except Exception as e:
-            try:
-                text = await response.text()
-            except Exception:
-                text = "(body unavailable)"
-            logger.warning(
-                "PND fetch JSON parse failed: %s, response: %s",
-                e,
-                text[:500] if text else "(empty)",
+        except Exception:
+            logger.warning("PND fetch JSON parse failed (details suppressed)")
+            raise PndFetchError(
+                "PND fetch JSON parse failed", status_code=status
+            ) from None
+        if not isinstance(data, dict):
+            raise PndFetchError(
+                "PND JSON response is not an object", status_code=status
             )
-            raise PndFetchError(f"PND fetch JSON parse failed: {e}")
-
+        indicator = data.get("hasData")
+        safe_indicator = (
+            "true" if indicator is True else "false" if indicator is False
+            else "unknown"
+        )
         logger.debug(
             "PND fetch assembly=%d status=%d hasData=%s",
             assembly_id,
-            response.status,
-            data.get("hasData"),
+            status,
+            safe_indicator,
         )
         return data
 
