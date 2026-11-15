@@ -12,6 +12,7 @@ from addon.src.dip_client import (
     DipFetchError,
     DipMaintenanceError,
     DipTokenError,
+    _safe_token_diagnostics,
 )
 
 
@@ -327,3 +328,101 @@ def test_is_html_content_type_handles_none():
 
 def test_dip_maintenance_error_is_subclass_of_dip_fetch_error():
     assert issubclass(DipMaintenanceError, DipFetchError)
+
+
+@pytest.mark.asyncio
+async def test_token_timeout_reports_safe_page_flags_without_url_values():
+    page = _mock_page(
+        wait_for_function_error=PlaywrightTimeoutError("Timeout 30000ms exceeded")
+    )
+    page.url = (
+        "https://dip.cezdistribuce.cz/irj/portal/prehled-om"
+        "?ean=SECRET_EAN&token=SECRET_TOKEN"
+    )
+    page.goto.return_value = Mock(status=200)
+    page.evaluate.return_value = {
+        "ready": "complete",
+        "login": False,
+        "sessionToken": True,
+    }
+    context = _mock_context(page)
+
+    with pytest.raises(DipTokenError) as exc_info:
+        await DipClient().fetch_hdo(context, ean="SECRET_EAN")
+
+    message = str(exc_info.value)
+    assert "route=dip-signals-page" in message
+    assert "navigation_http=200" in message
+    assert "ready=complete" in message
+    assert "login_form=false" in message
+    assert "session_storage_has_token=true" in message
+    assert "SECRET_EAN" not in message
+    assert "SECRET_TOKEN" not in message
+    assert "https://" not in message
+    page.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_safe_hdo_diagnostics_never_expose_redirect_url():
+    page = Mock()
+    page.url = "https://login.example.net/sso?code=DO_NOT_LOG"
+    page.evaluate = AsyncMock(
+        return_value={"ready": "interactive", "login": True, "sessionToken": False}
+    )
+    result = await _safe_token_diagnostics(page, Mock(status=302))
+    assert "route=other-origin" in result
+    assert "navigation_http=302" in result
+    assert "login_form=true" in result
+    assert "DO_NOT_LOG" not in result
+    assert "login.example" not in result
+
+
+@pytest.mark.asyncio
+async def test_safe_hdo_diagnostics_discard_unexpected_page_values():
+    page = Mock()
+    page.url = "https://dip.cezdistribuce.cz/irj/portal/user/PRIVATE_IDENTIFIER"
+    page.evaluate = AsyncMock(
+        return_value={
+            "ready": "SECRET_READY",
+            "login": "SENSITIVE",
+            "sessionToken": "SENSITIVE",
+        }
+    )
+    result = await _safe_token_diagnostics(page, Mock(status="SECRET_STATUS"))
+    assert "route=dip-other-portal-page" in result
+    assert "navigation_http=unavailable" in result
+    assert "ready=unavailable" in result
+    assert "login_form=unavailable" in result
+    assert "session_storage_has_token=unavailable" in result
+    assert "PRIVATE" not in result
+    assert "SENSITIVE" not in result
+
+
+@pytest.mark.asyncio
+async def test_safe_hdo_diagnostics_discard_exception_detail():
+    page = Mock()
+    page.url = "https://dip.cezdistribuce.cz/irj/portal/prehled-om?code=NEVER_LOG"
+    page.evaluate = AsyncMock(side_effect=RuntimeError("PASSWORD=never_log"))
+    result = await _safe_token_diagnostics(page, None)
+    assert "navigation_http=unavailable" in result
+    assert "ready=unavailable" in result
+    assert "PASSWORD" not in result
+    assert "NEVER_LOG" not in result
+
+
+@pytest.mark.asyncio
+async def test_hdo_timeout_diagnostic_does_not_fetch_signals():
+    page = _mock_page(wait_for_function_error=PlaywrightTimeoutError("timeout"))
+    page.url = "https://dip.cezdistribuce.cz/irj/portal/prehled-om"
+    page.evaluate.return_value = {
+        "ready": "loading",
+        "login": False,
+        "sessionToken": False,
+    }
+    context = _mock_context(page)
+
+    with pytest.raises(DipTokenError):
+        await DipClient().fetch_hdo(context, ean="synthetic")
+
+    page.evaluate.assert_awaited_once()
+    page.close.assert_awaited_once()
