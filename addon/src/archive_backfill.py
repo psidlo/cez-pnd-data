@@ -118,7 +118,11 @@ class ArchiveBackfill:
     ) -> list[BackfillTask]:
         """Plan earliest gaps, with two-hour and Prague-local daily cooldowns."""
         try:
-            start = date.fromisoformat(start_date) if isinstance(start_date, str) else start_date
+            start = (
+                date.fromisoformat(start_date)
+                if isinstance(start_date, str)
+                else start_date
+            )
         except ValueError as exc:
             raise ValueError("archive_start_date must be YYYY-MM-DD") from exc
         if not isinstance(start, date) or isinstance(start, datetime):
