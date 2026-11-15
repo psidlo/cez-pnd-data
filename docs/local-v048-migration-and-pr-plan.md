@@ -173,3 +173,14 @@ Honza PR #18 changes MQTT availability from per-meter `cez_pnd/{meter_id}/availa
 5. **Offline validation:** The locally staged/sanitized representative source suites passed **67 tests** in total: PND historical/rejection compatibility 25, PND privacy 12, HDO diagnostics/privacy 8, archive core/privacy 9, backfill 13. These were run with mocked browser/network and synthetically generated meter data, **not live CEZ**. The exact published GitHub branch source and all original upstream tests have **not yet been run in a verified GitHub Actions matrix**. Treat combined behavior as provisionally validated, not merge-ready.
 6. **Safety and next gate:** None of the integration branches contain local config, actual meters/EANs, household IPs, credentials, cookies or database contents. The original individual PRs remain draft and independent; both integration branches are test-only, no upstream PRs or main merges. Before optional runtime wiring or live HDO diagnosis, run exact-code CI, review timeouts and session behavior, and obtain explicit deployment approval.
 
+
+
+## GitHub Actions offline CI actually executed (2026-11-15)
+
+- [Draft PR #10](https://github.com/psidlo/cez-pnd-data/pull/10): isolated fork CI workflow with `contents: read`, non-persistent GitHub credentials, no CEZ/HA secrets and `pytest-socket` blocking external sockets but allowing asyncio's local Unix sockets. Runner pinned to Ubuntu 24.04 to support Python 3.9. Runs were **actually triggered and verified**, not inferred.
+- [Base CI run #43709255086](https://github.com/psidlo/cez-pnd-data/actions/runs/43709255086): all Python 3.9/3.11/3.12/3.13 jobs PASS; 341 tests on 3.13.
+- [HDO #1 + #7 + #9 run #43709274324](https://github.com/psidlo/cez-pnd-data/actions/runs/43709274324): all four Python versions PASS; 355 tests on 3.13.
+- [Archive #2 + backfill #3 run #43709296793](https://github.com/psidlo/cez-pnd-data/actions/runs/43709296793): all four versions PASS; 363 tests on 3.13.
+- [Historical PND #4 + rejection #5 run #43709452450](https://github.com/psidlo/cez-pnd-data/actions/runs/43709452450): all four versions PASS; 377 tests on 3.13. The first attempt exposed an improper test helper import, fixed on the integration branch and then rerun successfully.
+- The **original, upstream-inherited** `.github/workflows/ci.yml` also ran on PR #10, and **remains failing overall**. Verified issues: no Python 3.9 on Ubuntu 26.04, unresolved `aquasecurity/trivy-action@0.28.0`, Black formatting of pre-existing files, and pip-audit. Its Python 3.10/3.11/3.12 test jobs and secret/SAST jobs passed. Do not claim upstream-original CI is green. Fix that larger workflow separately before promoting drafts.
+- All source and test files are from the public fork with synthetic fixtures; no HA file-system access, real CEZ API, FVE database or private account data. The live add-on has not been modified.
