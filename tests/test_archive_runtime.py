@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from addon.src.archive_backfill import BackfillResult
-from addon.src.archive_runtime import ArchiveCycle, archive_settings_from_env
+from addon.src.archive_runtime import (
+    ArchiveCycle,
+    archive_meters_from_env,
+    archive_settings_from_env,
+)
 from addon.src.orchestrator import Orchestrator, OrchestratorConfig
 
 METER_1 = "SYNTHETIC_METER_ONE"
@@ -196,3 +200,61 @@ async def test_explicit_metadata_conflict_is_rejected_without_data_loss(caplog):
     cycle.backfill.run.assert_not_awaited()
     assert "SYNTHETIC_CONFLICT_PRIVATE" not in caplog.text
     assert METER_1 not in caplog.text
+
+
+def test_archive_meter_selection_keeps_legacy_history_separate_from_mqtt():
+    env = {
+        "CEZ_ARCHIVE_METER_IDS": '["111111","222222"]',
+        "CEZ_IMPORT_EAN": "SYNTHETIC_IMPORT",
+        "CEZ_EXPORT_EAN": "SYNTHETIC_EXPORT",
+    }
+    meters = archive_meters_from_env(
+        env, [{"electrometer_id": "222222", "ean": "MQTT_EAN"}]
+    )
+    assert [m["electrometer_id"] for m in meters] == ["111111", "222222"]
+    assert all(m["archive_import_ean"] == "SYNTHETIC_IMPORT" for m in meters)
+    assert all(m["archive_export_ean"] == "SYNTHETIC_EXPORT" for m in meters)
+
+
+def test_archive_meters_with_no_separate_list_keep_current_mqtt_selection():
+    mqtt = [{"electrometer_id": "333333", "ean": "MQTT_EAN"}]
+    assert archive_meters_from_env({"CEZ_ARCHIVE_METER_IDS": "[]"}, mqtt) == mqtt
+
+
+@pytest.mark.parametrize("invalid", [
+    "not-json", '["1234", 3]', '["private-not-numeric"]',
+    '{"wrong":"shape"}',
+])
+def test_legacy_meter_list_is_validated_without_echoing_input(invalid):
+    with pytest.raises(ValueError) as e:
+        archive_meters_from_env({"CEZ_ARCHIVE_METER_IDS": invalid}, [])
+    assert invalid not in str(e.value)
+
+
+def test_half_configured_archive_ean_pair_rejected_without_private_values():
+    with pytest.raises(ValueError) as e:
+        archive_meters_from_env({
+            "CEZ_ARCHIVE_METER_IDS": '["111111"]',
+            "CEZ_IMPORT_EAN": "SYNTHETIC_SECRET",
+        }, [])
+    assert "SYNTHETIC_SECRET" not in str(e.value)
+
+
+def test_archive_max_days_matches_legacy_50_day_setting():
+    assert archive_settings_from_env({
+        "CEZ_ARCHIVE_ENABLED": "true",
+        "CEZ_ARCHIVE_START_DATE": "2026-09-01",
+        "CEZ_ARCHIVE_MAX_DAYS": "50",
+    }) == (True, "2026-09-01", 50)
+
+
+def test_external_mqtt_options_present_without_private_defaults():
+    from pathlib import Path
+    script = Path("addon/run.sh").read_text(encoding="utf-8")
+    config = Path("addon/config.yaml").read_text(encoding="utf-8")
+    for name in ("mqtt_host", "mqtt_port", "mqtt_user", "mqtt_password"):
+        assert f'read_option {name} ' in script
+        assert f"  {name}:" in config
+    assert "CEZ_ARCHIVE_METER_IDS" in script
+    assert "CEZ_ARCHIVE_MAX_DAYS" in script
+    assert "Waiting for MQTT broker at " not in script
