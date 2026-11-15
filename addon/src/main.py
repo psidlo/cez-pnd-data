@@ -95,6 +95,15 @@ class PndFetcher:
         if self.cooldown_seconds_remaining > 0:
             raise PndRequestRejected("PND rejection cooldown active")
 
+    def _check_warmup_rejection(self, response: Any) -> None:
+        status = getattr(response, "status", None)
+        if type(status) is int and status in REJECTION_STATUS_CODES:
+            self._begin_rejection_backoff()
+            raise PndRequestRejected(
+                f"PND portal rejected warmup request (HTTP {status})",
+                status_code=status,
+            )
+
     @staticmethod
     async def _create_browser_context(browser: Any) -> Any:
         return await browser.new_context(
@@ -153,9 +162,12 @@ class PndFetcher:
                         data=json.dumps(form_payload),
                         headers={"Content-Type": "application/json"},
                     )
+                    self._check_warmup_rejection(warmup_response)
                     logger.debug(
                         "Warmup status: %d (expected 400)", warmup_response.status
                     )
+                except PndRequestRejected:
+                    raise
                 except Exception as e:
                     logger.debug("Warmup failed (details suppressed)")
 
@@ -224,9 +236,12 @@ class PndFetcher:
                         data=json.dumps(warmup_payload),
                         headers={"Content-Type": "application/json"},
                     )
+                    self._check_warmup_rejection(warmup_response)
                     logger.debug(
                         "Warmup status: %d (expected 400)", warmup_response.status
                     )
+                except PndRequestRejected:
+                    raise
                 except Exception as e:
                     logger.debug("Warmup POST failed (details suppressed)")
 
