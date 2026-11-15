@@ -17,7 +17,11 @@ from typing import Any, Dict, List, Optional
 import paho.mqtt.client as mqtt_client
 
 from .auth import DEFAULT_USER_AGENT, PND_BASE_URL, PlaywrightAuthClient
-from .archive_runtime import ArchiveCycle, archive_settings_from_env
+from .archive_runtime import (
+    ArchiveCycle,
+    archive_meters_from_env,
+    archive_settings_from_env,
+)
 from .dip_client import DipClient
 from .mqtt_publisher import MqttPublisher
 from .pnd_history import pnd_fetch_window
@@ -573,6 +577,10 @@ async def main():
     archive_enabled, archive_start_date, archive_max_days = archive_settings_from_env(
         os.environ
     )
+    archive_meters = (
+        archive_meters_from_env(os.environ, config["cez"]["electrometers"])
+        if archive_enabled else []
+    )
 
     # Log only safe configuration indicators and counts.
     log_startup_summary(config)
@@ -630,7 +638,10 @@ async def main():
             fetcher=pnd_fetcher,
             mqtt_publisher=mqtt_publisher,
             hdo_fetcher=hdo_fetcher,
-            archive_hook=archive_cycle.run if archive_cycle is not None else None,
+            archive_hook=(
+                (lambda cookies, _mqtt_meters: archive_cycle.run(cookies, archive_meters))
+                if archive_cycle is not None else None
+            ),
         )
 
         await orchestrator.run_loop()
