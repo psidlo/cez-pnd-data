@@ -340,6 +340,7 @@ async def test_token_timeout_reports_safe_page_flags_without_url_values():
         "?ean=SECRET_EAN&token=SECRET_TOKEN"
     )
     page.goto.return_value = Mock(status=200)
+    page.evaluate.side_effect = None
     page.evaluate.return_value = {
         "ready": "complete",
         "login": False,
@@ -414,6 +415,7 @@ async def test_safe_hdo_diagnostics_discard_exception_detail():
 async def test_hdo_timeout_diagnostic_does_not_fetch_signals():
     page = _mock_page(wait_for_function_error=PlaywrightTimeoutError("timeout"))
     page.url = "https://dip.cezdistribuce.cz/irj/portal/prehled-om"
+    page.evaluate.side_effect = None
     page.evaluate.return_value = {
         "ready": "loading",
         "login": False,
