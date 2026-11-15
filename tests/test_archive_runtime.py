@@ -52,6 +52,10 @@ def test_enabled_archive_configuration_is_bounded():
 async def test_archive_budget_shared_across_all_meters_without_ean_guessing():
     store = MagicMock()
     client = MagicMock()
+    store.db.execute.return_value.fetchone.side_effect = [
+        (EAN_1, "SYNTHETIC_EXPORT_EAN_ONE"),
+        (EAN_2, "SYNTHETIC_EXPORT_EAN_TWO"),
+    ]
     cycle = ArchiveCycle(
         client, store=store, start_date="2026-09-01",
         max_days=2, rejection_error=RuntimeError,
@@ -69,8 +73,10 @@ async def test_archive_budget_shared_across_all_meters_without_ean_guessing():
     first, second = cycle.backfill.run.await_args_list
     assert first.args[2] == METER_1
     assert second.args[2] == METER_2
-    assert first.args[7] == ""
-    assert second.args[7] == ""
+    assert first.args[6] == EAN_1
+    assert second.args[6] == EAN_2
+    assert first.args[7] == "SYNTHETIC_EXPORT_EAN_ONE"
+    assert second.args[7] == "SYNTHETIC_EXPORT_EAN_TWO"
     assert first.args[5] == 2
     assert second.args[5] == 1
     cycle.close()
@@ -80,6 +86,9 @@ async def test_archive_budget_shared_across_all_meters_without_ean_guessing():
 @pytest.mark.asyncio
 async def test_archive_rejection_stops_remaining_meters(caplog):
     store = MagicMock()
+    store.db.execute.return_value.fetchone.return_value = (
+        EAN_1, "SYNTHETIC_EXPORT_EAN_ONE",
+    )
     cycle = ArchiveCycle(
         MagicMock(), store=store, start_date="2026-09-01",
         max_days=3, rejection_error=RuntimeError,
@@ -115,3 +124,75 @@ async def test_optional_hook_failure_does_not_interrupt_normal_poll(caplog):
     hook.assert_awaited_once()
     assert "Optional PND archive cycle failed" in caplog.text
     assert "SYNTHETIC_SECRET" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_existing_metadata_is_not_overwritten_with_supply_ean(caplog):
+    store = MagicMock()
+    store.db.execute.return_value.fetchone.return_value = (
+        "SYNTHETIC_STORED_IMPORT", "SYNTHETIC_STORED_EXPORT",
+    )
+    cycle = ArchiveCycle(
+        MagicMock(), store=store, start_date="2026-09-01",
+        max_days=1, rejection_error=RuntimeError,
+    )
+    cycle.backfill.run = AsyncMock(return_value=BackfillResult(attempted=1))
+    with caplog.at_level(logging.WARNING):
+        await cycle.run([], [{"electrometer_id": METER_1, "ean": EAN_1}])
+    called = cycle.backfill.run.await_args
+    assert called.args[6:8] == (
+        "SYNTHETIC_STORED_IMPORT", "SYNTHETIC_STORED_EXPORT"
+    )
+    assert METER_1 not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_missing_explicit_ean_mapping_skips_meter_without_write(caplog):
+    store = MagicMock()
+    store.db.execute.return_value.fetchone.return_value = None
+    cycle = ArchiveCycle(
+        MagicMock(), store=store, start_date="2026-09-01",
+        max_days=1, rejection_error=RuntimeError,
+    )
+    cycle.backfill.run = AsyncMock()
+    with caplog.at_level(logging.WARNING):
+        await cycle.run([], [{"electrometer_id": METER_1, "ean": EAN_1}])
+    cycle.backfill.run.assert_not_awaited()
+    assert METER_1 not in caplog.text
+    assert EAN_1 not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_new_meter_accepts_two_explicit_distinct_eans():
+    store = MagicMock()
+    store.db.execute.return_value.fetchone.return_value = None
+    cycle = ArchiveCycle(
+        MagicMock(), store=store, start_date="2026-09-01",
+        max_days=1, rejection_error=RuntimeError,
+    )
+    cycle.backfill.run = AsyncMock(return_value=BackfillResult(attempted=1))
+    await cycle.run([], [{
+        "electrometer_id": METER_1, "ean": "SUPPLY_ONLY",
+        "archive_import_ean": EAN_1,
+        "archive_export_ean": EAN_2,
+    }])
+    assert cycle.backfill.run.await_args.args[6:8] == (EAN_1, EAN_2)
+
+
+@pytest.mark.asyncio
+async def test_explicit_metadata_conflict_is_rejected_without_data_loss(caplog):
+    store = MagicMock()
+    store.db.execute.return_value.fetchone.return_value = (EAN_1, EAN_2)
+    cycle = ArchiveCycle(
+        MagicMock(), store=store, start_date="2026-09-01",
+        max_days=1, rejection_error=RuntimeError,
+    )
+    cycle.backfill.run = AsyncMock()
+    with caplog.at_level(logging.WARNING):
+        await cycle.run([], [{
+            "electrometer_id": METER_1, "ean": "SUPPLY_ONLY",
+            "archive_import_ean": "SYNTHETIC_CONFLICT_PRIVATE",
+        }])
+    cycle.backfill.run.assert_not_awaited()
+    assert "SYNTHETIC_CONFLICT_PRIVATE" not in caplog.text
+    assert METER_1 not in caplog.text
