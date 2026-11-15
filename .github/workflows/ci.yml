@@ -17,7 +17,7 @@ jobs:
   # Job 1: Test — pytest matrix with coverage
   # ──────────────────────────────────────────────────────────
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -61,7 +61,7 @@ jobs:
   # Job 2: Lint — flake8, black, isort, mypy, ruff
   # ──────────────────────────────────────────────────────────
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +113,7 @@ jobs:
   # Job 3: Security SAST — Bandit static analysis
   # ──────────────────────────────────────────────────────────
   security-sast:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
 
     steps:
@@ -146,7 +146,7 @@ jobs:
   # Job 4: Security Deps — pip-audit + safety
   # ──────────────────────────────────────────────────────────
   security-deps:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
 
     steps:
@@ -165,13 +165,12 @@ jobs:
 
       - name: Run pip-audit
         run: |
-          pip-audit --format=json --output=pip-audit-report.json || true
-          pip-audit
+          pip-audit -r addon/requirements.txt --format=json --output=pip-audit-report.json
 
       - name: Run safety check
         run: |
-          safety check --output json > safety-report.json 2>&1 || true
-          safety check
+          safety check -r addon/requirements.txt --output json > safety-report.json 2>&1 || true
+          safety check -r addon/requirements.txt
 
       - name: Upload dependency audit reports
         uses: actions/upload-artifact@v4
@@ -187,7 +186,7 @@ jobs:
   # Job 5: Security Secrets — gitleaks (BLOCKING)
   # ──────────────────────────────────────────────────────────
   security-secrets:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -202,7 +201,7 @@ jobs:
   # Job 6: Docker Build — build + Trivy scan
   # ──────────────────────────────────────────────────────────
   docker-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
@@ -215,7 +214,7 @@ jobs:
           docker build -t cez-pnd:ci-${{ github.sha }} ./addon
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         continue-on-error: true
         with:
           image-ref: cez-pnd:ci-${{ github.sha }}
@@ -237,7 +236,7 @@ jobs:
   # Job 7: SBOM — Software Bill of Materials
   # ──────────────────────────────────────────────────────────
   sbom:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     needs: [docker-build]
 
