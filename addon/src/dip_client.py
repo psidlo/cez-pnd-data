@@ -139,6 +139,8 @@ class DipClient:
             )
 
             status = result["status"]
+            if type(status) is not int or not 100 <= status <= 599:
+                raise DipFetchError("Signals endpoint returned invalid HTTP status")
             content_type = result["contentType"]
             body = result["body"]
 
@@ -160,7 +162,8 @@ class DipClient:
 
         except (DipTokenError, DipFetchError):
             raise
-        except (asyncio.TimeoutError, Exception) as exc:
-            raise DipFetchError(f"Fetch failed: {exc}") from exc
+        except Exception:
+            # Never expose untrusted Playwright errors, URLs or token fragments.
+            raise DipFetchError("Fetch failed: details suppressed") from None
         finally:
             await page.close()
