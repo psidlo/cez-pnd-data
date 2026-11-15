@@ -49,7 +49,7 @@ def _parse_time_ranges(casy: str) -> list[tuple[str, str]]:
         if not part:
             continue
         if "-" not in part:
-            logger.warning("Skipping malformed time range: %s", part)
+            logger.warning("Skipping malformed HDO time range (details suppressed)")
             continue
         start, end = part.split("-", 1)
         ranges.append((start.strip(), end.strip()))

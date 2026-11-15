@@ -369,7 +369,7 @@ class MqttPublisher:
                     qos=1,
                     retain=True,
                 )
-                logger.debug("Published discovery: %s", topic)
+                logger.debug("Published MQTT discovery configuration")
 
         self.publish_hdo_discovery()
 
@@ -399,7 +399,7 @@ class MqttPublisher:
     ) -> None:
         for key, value in readings.items():
             if key not in VALID_SENSOR_KEYS:
-                logger.warning("Ignoring unknown sensor key: %s", key)
+                logger.warning("Ignoring unknown sensor key (details suppressed)")
                 continue
             if value is None:
                 continue
@@ -411,7 +411,7 @@ class MqttPublisher:
                 qos=1,
                 retain=True,
             )
-            logger.debug("Published state: %s = %s", topic, value)
+            logger.debug("Published MQTT sensor state")
 
     def publish_hdo_state(
         self, hdo_data: Any, *, electrometer_id: str | None = None
@@ -439,7 +439,7 @@ class MqttPublisher:
                 qos=1,
                 retain=True,
             )
-            logger.debug("Published HDO state: %s = %s", topic, value)
+            logger.debug("Published HDO sensor state")
 
     def publish_hdo_discovery(self) -> None:
         """Publish MQTT Discovery config for all 4 HDO sensor entities of every electrometer."""
@@ -458,4 +458,4 @@ class MqttPublisher:
                     qos=1,
                     retain=True,
                 )
-                logger.debug("Published HDO discovery: %s", topic)
+                logger.debug("Published HDO discovery configuration")

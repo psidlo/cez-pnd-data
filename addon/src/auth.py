@@ -96,7 +96,7 @@ class PlaywrightAuthClient:
             async_playwright,
         )
 
-        logger.info("Starting Playwright login for %s", credentials.email)
+        logger.info("Starting Playwright login")
         if not self._playwright:
             self._playwright = await async_playwright().start()
         assert self._playwright is not None  # for type checker

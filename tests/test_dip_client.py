@@ -313,3 +313,52 @@ def test_is_html_content_type_handles_none():
 
 def test_dip_maintenance_error_is_subclass_of_dip_fetch_error():
     assert issubclass(DipMaintenanceError, DipFetchError)
+
+
+@pytest.mark.asyncio
+async def test_hdo_browser_exception_is_redacted():
+    private = "SYNTHETIC_PRIVATE_EAN_OR_TOKEN"
+    page = _mock_page(evaluate_error=RuntimeError(private))
+    context = _mock_context(page)
+
+    with pytest.raises(DipFetchError, match="Fetch failed:") as error:
+        await DipClient().fetch_hdo(context, ean="synthetic")
+
+    assert private not in str(error.value)
+    assert "details suppressed" in str(error.value)
+    assert error.value.__suppress_context__ is True
+    page.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_hdo_untrusted_status_is_not_interpolated_into_error():
+    private = "SYNTHETIC_UNTRUSTED_STATUS"
+    page = _mock_page(
+        fetch_result={"status": private, "contentType": "text/html", "body": private}
+    )
+    context = _mock_context(page)
+
+    with pytest.raises(DipFetchError, match="invalid HTTP status") as error:
+        await DipClient().fetch_hdo(context, ean="synthetic")
+
+    assert private not in str(error.value)
+    page.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_hdo_invalid_json_is_redacted():
+    private = "SYNTHETIC_PRIVATE_RESPONSE"
+    page = _mock_page(
+        fetch_result={
+            "status": 200,
+            "contentType": "application/json",
+            "body": "not-json " + private,
+        }
+    )
+    context = _mock_context(page)
+
+    with pytest.raises(DipFetchError, match="Fetch failed:") as error:
+        await DipClient().fetch_hdo(context, ean="synthetic")
+
+    assert private not in str(error.value)
+    page.close.assert_awaited_once()

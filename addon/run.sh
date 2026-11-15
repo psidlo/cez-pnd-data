@@ -32,10 +32,10 @@ try:
     else:
         print(str(value))
 except json.JSONDecodeError as e:
-    sys.stderr.write(f"Warning: Failed to parse JSON in options file '{path}': {e}\n")
+    sys.stderr.write("Warning: Invalid add-on options JSON (details suppressed)\n")
     print(default)
 except Exception as e:
-    sys.stderr.write(f"Warning: Error reading options file '{path}': {e}\n")
+    sys.stderr.write("Warning: Add-on options read error (details suppressed)\n")
     print(default)
 PY
     else
@@ -65,7 +65,7 @@ wait_for_mqtt() {
     local attempt=1
     local sleep_seconds=2
 
-    echo "Waiting for MQTT broker at ${MQTT_HOST}:${MQTT_PORT}..."
+    echo "Waiting for configured MQTT broker..."
     while (( attempt <= max_attempts )); do
         if python3 - "$MQTT_HOST" "$MQTT_PORT" <<'PY'
 import socket
@@ -91,7 +91,7 @@ PY
         sleep "${sleep_seconds}"
     done
 
-    echo "Error: MQTT broker at ${MQTT_HOST}:${MQTT_PORT} did not become available in time." >&2
+    echo "Error: Configured MQTT broker did not become available in time." >&2
     return 1
 }
 
