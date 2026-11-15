@@ -4,6 +4,8 @@ import asyncio
 import json
 from typing import Any
 
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
 DIP_PORTAL_URL = "https://dip.cezdistribuce.cz/irj/portal"
 SIGNALS_PATH_TEMPLATE = "prehled-om?path=supply-point-detail/signals/{ean}"
 
@@ -43,7 +45,7 @@ class DipClient:
                     "() => localStorage.getItem('dip-request-token') !== null",
                     timeout=self.DEFAULT_TIMEOUT,
                 )
-            except (TimeoutError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, asyncio.TimeoutError, PlaywrightTimeoutError) as exc:
                 raise DipTokenError(
                     "Token not found in localStorage — Angular may not have loaded"
                 ) from exc
