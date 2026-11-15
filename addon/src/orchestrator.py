@@ -130,7 +130,12 @@ class Orchestrator:
 
         while True:
             await self.run_once()
-            await asyncio.sleep(self._config.poll_interval_seconds)
+            fetcher = getattr(self._fetcher, "__self__", None)
+            cooldown = getattr(fetcher, "cooldown_seconds_remaining", 0.0)
+            wait_seconds = max(self._config.poll_interval_seconds, cooldown)
+            if cooldown > self._config.poll_interval_seconds:
+                logger.warning("PND polling delayed by portal rejection cooldown")
+            await asyncio.sleep(wait_seconds)
 
     async def run_once(self) -> None:
         """Execute a single fetch-parse-publish cycle."""
