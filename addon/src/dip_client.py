@@ -48,7 +48,11 @@ async def _safe_token_diagnostics(page: Any, navigation_response: Any) -> str:
     """Only return allowlisted diagnostic categories; no URLs or page values."""
     route = _location_category(getattr(page, "url", None))
     status = getattr(navigation_response, "status", None)
-    http = str(status) if type(status) is int and 100 <= status <= 599 else "unavailable"
+    http = (
+        str(status)
+        if type(status) is int and 100 <= status <= 599
+        else "unavailable"
+    )
     ready, login, session_token = "unavailable", "unavailable", "unavailable"
     try:
         result = await asyncio.wait_for(
