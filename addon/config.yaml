@@ -16,11 +16,17 @@ options:
   electrometer_id: ""
   ean: ""
   electrometers: "[]"
+  archive_enabled: false
+  archive_start_date: ""
+  archive_max_days_per_cycle: 1
 schema:
   email: str
   password: password
   electrometer_id: str?
   ean: str?
   electrometers: str?
+  archive_enabled: bool
+  archive_start_date: str?
+  archive_max_days_per_cycle: int(1,62)
 map:
   - "share:rw"
