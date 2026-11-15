@@ -232,7 +232,7 @@ class PndFetcher:
                             # Do not interpolate sensitive API errors here.
                             raise
                         logger.error(
-                            "Assembly %s failed for meter %s: %s — continuing"
+                            "Assembly %s failed for meter %s: %s — continuing",
                             assembly_name,
                             meter_id,
                             e,
