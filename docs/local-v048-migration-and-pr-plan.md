@@ -74,6 +74,30 @@ Candidate split: `feat/pnd-archive-core` (standalone SQLite schema/projection, q
 - Neither PR #5 nor PR #4, #3, #2, #1 has been deployed or submitted upstream. Running HA add-on, databases, MQTT, Predbat and SolaX untouched.
 - Follow-up: compatibility review between #5 and #4, then optional HA runtime wiring as its own PR, only after tests. The actual DIP HDO token-acquisition root cause still requires a separately approved redacted live diagnosis.
 
+## Whole-project logging privacy audit and remediation (2026-11-15)
+
+An audit compared the user's **private** local 0.4.8 source backup, upstream `main` and Honza's fork. Only the following **sanitized source/test modifications** are published, never private backups or operational configurations.
+
+| Independently reviewable change | Public fork draft PR | Findings and bounds |
+|---|---|---|
+| PND HTTP response error diagnostics + portal rejection cooldown | [#5](https://github.com/psidlo/cez-pnd-data/pull/5) | Raw HTML/JSON error bodies and parsing exception text were logged; replaced with fixed response categories and in-process 12-hour backoff (403/429 and recognized portal rejection). |
+| Startup / login / shell diagnostics | [#6](https://github.com/psidlo/cez-pnd-data/pull/6) | Default INFO included account email, meter ID, partially masked EAN and broker endpoint. Replaced with account-configured indicator, meter count, and no endpoint. Shell options parsing errors also redacted. |
+| Runtime orchestrator error handling | [#7](https://github.com/psidlo/cez-pnd-data/pull/7) | WARNING/ERROR reported meter IDs, Playwright and API exceptions, and an auth traceback. Now logs safe status codes and counts only. An indentation regression caught on review was fixed. |
+| MQTT state / discovery / HDO parser | [#8](https://github.com/psidlo/cez-pnd-data/pull/8) | DEBUG logs contained full MQTT topics, sensor values, HDO signal details; HDO parser echoed malformed remote fields. Only fixed diagnostic texts remain; MQTT payloads/topics are unchanged. |
+| DIP/HDO exception propagation | [#9](https://github.com/psidlo/cez-pnd-data/pull/9) | Generic `DipFetchError` included raw browser exception strings, potentially EAN/URL/token; now fixed text, suppressed exception chain and type-checked HTTP status. |
+| **Previously missed archive-core logging** | [#2](https://github.com/psidlo/cez-pnd-data/pull/2) updated | SQLite archive logged requested and response-observed meter IDs on profile mismatch, even though no static private data were uploaded. Redacted those logs and added two regression tests; **9/9 isolated archive tests passed** on a matching sanitized local copy. |
+| HDO safe diagnostic compatibility | [#1](https://github.com/psidlo/cez-pnd-data/pull/1) updated | Safe, allowlisted browser-state category is now logged directly at DIP on token timeout, so #7 suppression of arbitrary exception text does not remove it. Raw Playwright exception chaining is suppressed. Real HDO token acquisition remains unresolved. |
+
+**Audited source areas:** `auth.py`, `main.py`, `orchestrator.py`, `mqtt_publisher.py`, `dip_client.py`, `hdo_parser.py`, `session_manager.py`, `parser.py`, `cookie_utils.py`, `run.sh`, `archive.py` and `archive_backfill.py`. The latter backfill module's newly added log messages are fixed strings, not raw exception or identity values. Other code still needs a full dynamic integration and logging test before production use.
+
+**Verification and safety gates**
+- All nine PRs are **OPEN DRAFT**, against the owner's fork; the original upstream repo and our `main` remain unchanged.
+- Local isolated checks passed for archive core (9 tests), HDO generic exception sanitizer (2 checks), startup/shell privacy smoke, and MQTT/HDO privacy smoke. Other new regression tests exist in the PR branches but **the exact GitHub branch combinations and upstream CI have not been executed**. Never claim end-to-end CI success from isolated tests.
+- The archive backfill PR #3 was forked before the two archive-privacy commits on its base #2. The branches are now diverged; #3's PR diff still shows **only the two intended files**, but the stack must be rebased/updated and retested before merge. Do not discard or force-update unreviewed history.
+- **Known integration risks:** #1 safe HDO categories must survive #7 log redaction; #4 historical fetch and #5 PND rejection handling modify overlapping areas of `main.py`; #2–#3 archiving must be combined with #4 before runtime wiring. Test combined behavior and rollback before any deployment.
+- No raw log output, cookies, credentials, private meter/EAN IDs, home network addresses, live SQLite files or private source backup were committed. The running HA addon and FVE controls were not changed.
+- Further work: static code/format checks on exact GitHub branches, synthetic end-to-end compatibility suite, then optional archive runtime wiring as a new separate PR; real HDO diagnosis requires explicit, reversible deployment approval.
+
 ## Track A — HDO token regression (priority)
 
 Observed in the running v0.4.8 add-on after successful DIP login on 2026-11-15:
