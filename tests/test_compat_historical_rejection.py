@@ -12,7 +12,7 @@ from addon.src import main as runtime
 
 @pytest.mark.asyncio
 async def test_rejected_historical_assembly_aborts_remaining_requests(monkeypatch):
-    from test_pnd_history_fetch import fake_fetch_environment
+    from tests.test_pnd_history_fetch import fake_fetch_environment
 
     secret = "SYNTHETIC_SECRET_NEVER_LOG"
     configs = [
