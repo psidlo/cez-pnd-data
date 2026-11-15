@@ -65,9 +65,32 @@ class ArchiveCycle:
             if remaining <= 0:
                 break
             meter_id = meter.get("electrometer_id")
-            import_ean = meter.get("ean")
-            if not meter_id or not import_ean:
-                LOGGER.warning("Archive skipped a meter without required configuration")
+            if not meter_id:
+                LOGGER.warning("Archive skipped a meter without identifier")
+                continue
+            stored = self.store.db.execute(
+                "SELECT import_ean, export_ean FROM meter_metadata WHERE meter_id=?",
+                (str(meter_id),),
+            ).fetchone()
+            explicit_import = meter.get("archive_import_ean")
+            explicit_export = meter.get("archive_export_ean")
+            if stored and all(isinstance(v, str) and v.strip() for v in stored):
+                import_ean, export_ean = stored
+                if (
+                    (explicit_import is not None and explicit_import != import_ean)
+                    or (explicit_export is not None and explicit_export != export_ean)
+                ):
+                    LOGGER.warning("Archive EAN metadata conflict; skipping meter")
+                    continue
+            elif (
+                isinstance(explicit_import, str) and explicit_import.strip()
+                and isinstance(explicit_export, str) and explicit_export.strip()
+            ):
+                import_ean, export_ean = explicit_import, explicit_export
+            else:
+                # The generic 'ean' is a supply identifier, not necessarily an
+                # import/export EAN. Never overwrite stored metadata with guesses.
+                LOGGER.warning("Archive requires explicit import/export EAN metadata")
                 continue
             result = await self.backfill.run(
                 self.fetcher,
@@ -77,7 +100,7 @@ class ArchiveCycle:
                 self.start_date,
                 remaining,
                 str(import_ean),
-                "",  # Unknown export EAN is not inferred.
+                str(export_ean),
                 rejection_error=self.rejection_error,
             )
             remaining -= result.attempted
