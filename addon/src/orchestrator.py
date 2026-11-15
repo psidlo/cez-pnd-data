@@ -118,9 +118,9 @@ class Orchestrator:
     async def run_loop(self) -> None:
         """Starts polling loop. Runs until cancelled."""
         logger.info(
-            "Orchestrator starting — poll interval: %ds, meter: %s",
+            "Orchestrator starting — poll interval: %ds, meter count: %d",
             self._config.poll_interval_seconds,
-            self._config.meter_id,
+            len(self._config.electrometers),
         )
 
         self._mqtt.start()
@@ -138,15 +138,13 @@ class Orchestrator:
         try:
             session = await self._auth.ensure_session()
         except ServiceMaintenanceError as e:
-            logger.warning("[%s] %s — skipping cycle", PORTAL_MAINTENANCE, e)
+            logger.warning("[%s] Portal maintenance — skipping cycle", PORTAL_MAINTENANCE)
             return
         except Exception as e:
             logger.error(
-                "[%s] Auth failure — cannot obtain session: %s — skipping cycle",
+                "[%s] Auth failure (details suppressed) — skipping cycle",
                 SESSION_EXPIRED,
-                e,
             )
-            logger.debug("Auth failure details:", exc_info=True)
             return
 
         cookies = session.cookies
@@ -192,9 +190,8 @@ class Orchestrator:
                     hdo_session = await self._auth.ensure_session()
                 except Exception as e:
                     logger.error(
-                        "[%s] Re-auth for HDO failed: %s — skipping HDO this cycle",
+                        "[%s] Re-auth for HDO failed — skipping HDO this cycle",
                         HDO_FETCH_ERROR,
-                        e,
                     )
                     hdo_session = None
 
@@ -211,24 +208,18 @@ class Orchestrator:
                         self._mqtt.publish_hdo_state(hdo_data, electrometer_id=meter_id)
                     except DipMaintenanceError as e:
                         logger.warning(
-                            "[%s] %s for meter %s — skipping HDO this cycle",
+                            "[%s] HDO portal maintenance — skipping HDO this cycle",
                             DIP_MAINTENANCE,
-                            e,
-                            meter_id,
                         )
                     except DipTokenError as e:
                         logger.error(
-                            "[%s] Token acquisition failed for meter %s: %s — PND unaffected",
+                            "[%s] Token acquisition failed — PND unaffected",
                             HDO_TOKEN_ERROR,
-                            meter_id,
-                            e,
                         )
                     except Exception as e:
                         logger.error(
-                            "[%s] HDO fetch/parse/publish failed for meter %s: %s — PND unaffected",
+                            "[%s] HDO fetch/parse/publish failed — PND unaffected",
                             HDO_FETCH_ERROR,
-                            meter_id,
-                            e,
                         )
             else:
                 logger.warning(
@@ -306,10 +297,8 @@ class Orchestrator:
                 return await fetcher_obj.fetch_all(cookies, meter_id, ASSEMBLY_CONFIGS)
             except Exception as e:
                 logger.error(
-                    "[%s] Batch fetch_all failed for meter %s: %s",
+                    "[%s] Batch fetch_all failed (details suppressed)",
                     FETCH_ERROR,
-                    meter_id,
-                    e,
                 )
                 return {}
 
@@ -331,18 +320,15 @@ class Orchestrator:
                     results[config["name"]] = payload
                 else:
                     logger.warning(
-                        "[%s] Assembly %s fetch failed or has no data for meter %s",
+                        "[%s] Assembly %s fetch failed or has no data",
                         FETCH_ERROR,
                         config["name"],
-                        meter_id,
                     )
             except Exception as e:
                 logger.error(
-                    "[%s] Assembly %s failed for meter %s: %s — continuing with others",
+                    "[%s] Assembly %s failed — continuing with others",
                     FETCH_ERROR,
                     config["name"],
-                    meter_id,
-                    e,
                 )
         return results
 
@@ -389,19 +375,17 @@ class Orchestrator:
                 if attempt < self._config.max_retries:
                     delay = self._config.retry_base_delay_seconds * (2 ** (attempt - 1))
                     logger.warning(
-                        "[%s] CEZ fetch failed (attempt %d/%d): %s — retrying in %.1fs",
+                        "[%s] CEZ fetch failed (attempt %d/%d) — retrying in %.1fs",
                         CEZ_FETCH_ERROR,
                         attempt,
                         self._config.max_retries,
-                        exc,
                         delay,
                     )
                     await asyncio.sleep(delay)
 
         logger.error(
-            "[%s] CEZ fetch failed after %d attempts: %s — aborting cycle",
+            "[%s] CEZ fetch failed after %d attempts — aborting cycle",
             CEZ_FETCH_ERROR,
             self._config.max_retries,
-            last_error,
         )
         return None
