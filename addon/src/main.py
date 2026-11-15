@@ -303,9 +303,8 @@ class PndFetcher:
                         results[assembly_name] = payload
                     else:
                         logger.warning(
-                            "Assembly %s has no data for meter %s",
+                            "Assembly %s has no data",
                             assembly_name,
-                            meter_id,
                         )
 
                 return results
