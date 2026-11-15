@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 REJECTION_STATUS_CODES = frozenset({403, 429})
 REJECTION_COOLDOWN_SECONDS = 12 * 3600
 
@@ -31,14 +30,25 @@ def safe_html_category(body: Any) -> str:
         return "unknown"
     # Inspect a bounded prefix; preserve only a fixed categorical label.
     text = body[:65536].casefold()
-    if any(marker in text for marker in (
-        "the requested url was rejected", "request rejected", "access denied",
-        "captcha", "checking your browser",
-    )):
+    if any(
+        marker in text
+        for marker in (
+            "the requested url was rejected",
+            "request rejected",
+            "access denied",
+            "captcha",
+            "checking your browser",
+        )
+    ):
         return "portal-rejection"
-    if any(marker in text for marker in (
-        'name="username"', "name='username'", 'type="password"',
-    )):
+    if any(
+        marker in text
+        for marker in (
+            'name="username"',
+            "name='username'",
+            'type="password"',
+        )
+    ):
         return "login-page"
     if "odstávka" in text or "odstavka" in text:
         return "maintenance"
