@@ -258,3 +258,53 @@ def test_external_mqtt_options_present_without_private_defaults():
     assert "CEZ_ARCHIVE_METER_IDS" in script
     assert "CEZ_ARCHIVE_MAX_DAYS" in script
     assert "Waiting for MQTT broker at " not in script
+
+
+@pytest.mark.asyncio
+async def test_local_rejection_cooldown_delays_next_live_poll(monkeypatch):
+    import asyncio
+
+    class FakeFetcher:
+        cooldown_seconds_remaining = 3500.0
+
+        async def fetch(self, *_args, **_kwargs):
+            return {}
+
+    publisher = MagicMock()
+    orchestrator = Orchestrator(
+        config=OrchestratorConfig(electrometers=[], poll_interval_seconds=900),
+        auth_client=MagicMock(),
+        fetcher=FakeFetcher().fetch,
+        mqtt_publisher=publisher,
+    )
+    orchestrator.run_once = AsyncMock()
+    sleeper = AsyncMock(side_effect=asyncio.CancelledError)
+    monkeypatch.setattr("addon.src.orchestrator.asyncio.sleep", sleeper)
+    with pytest.raises(asyncio.CancelledError):
+        await orchestrator.run_loop()
+    orchestrator.run_once.assert_awaited_once()
+    sleeper.assert_awaited_once_with(3500.0)
+
+
+@pytest.mark.asyncio
+async def test_short_cooldown_does_not_shorten_normal_poll(monkeypatch):
+    import asyncio
+
+    class FakeFetcher:
+        cooldown_seconds_remaining = 120.0
+
+        async def fetch(self, *_args, **_kwargs):
+            return {}
+
+    orchestrator = Orchestrator(
+        config=OrchestratorConfig(electrometers=[], poll_interval_seconds=900),
+        auth_client=MagicMock(),
+        fetcher=FakeFetcher().fetch,
+        mqtt_publisher=MagicMock(),
+    )
+    orchestrator.run_once = AsyncMock()
+    sleeper = AsyncMock(side_effect=asyncio.CancelledError)
+    monkeypatch.setattr("addon.src.orchestrator.asyncio.sleep", sleeper)
+    with pytest.raises(asyncio.CancelledError):
+        await orchestrator.run_loop()
+    sleeper.assert_awaited_once_with(900)
