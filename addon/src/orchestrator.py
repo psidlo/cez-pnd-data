@@ -145,7 +145,7 @@ class Orchestrator:
                 "[%s] Auth failure (details suppressed) — skipping cycle",
                 SESSION_EXPIRED,
             )
-             return
+            return
 
         cookies = session.cookies
 
