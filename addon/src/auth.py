@@ -75,7 +75,7 @@ class PlaywrightAuthClient:
                 live_ctx is not None
                 and live_browser is not None
                 and live_browser.is_connected()
-            )
+            ):
                 return AuthSession(
                     cookies=state.cookies,
                     reused=True,
