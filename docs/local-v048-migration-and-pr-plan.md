@@ -47,6 +47,14 @@ Candidate split: `feat/pnd-archive-core` (standalone SQLite schema/projection, q
 - Source file hashes were checked after GitHub upload against the locally reviewed byte-for-byte files; public branch contains no real household identifiers, network addresses, credentials or captured measurement data.
 - Follow-up candidates: `feat/pnd-archive-backfill` then `feat/pnd-archive-addon-wiring`; the latter must preserve default upstream behavior and compatibility. If upstream prefers one functional PR, prepare a combined review without losing separable commits.
 
+## Backfill implementation prepared (2026-11-15)
+
+- [Draft PR #3 — rate-limited PND backfill](https://github.com/psidlo/cez-pnd-data/pull/3) **stacks onto PR #2** (`feat/pnd-archive-core`), changing exactly `addon/src/archive_backfill.py` and `tests/test_archive_backfill.py`. It adds no separate copy of archive-core files to its diff.
+- **20/20 synthetic tests passed** locally: 13 backfill + 7 archive store tests. Source and test Git blob hashes match the tested files; all identifiers in fixtures are synthetic, and a scan against identifiers found in the user's backup found no private identifier matches. GitHub Actions/CI not yet observed.
+- Backfill plans bounded historical refreshes in Europe/Prague, obeys two-hour rejection cooldown, weekly rechecks for old empty assemblies, recent-day daily refresh, and same-EAN replacement meter handling. Network access is injected rather than hard-coded. Rejections stop the batch and exception strings are never logged.
+- The original 0.4.8 implementation is used as behavioral reference but **no original private configuration, database, credential/session state, or backup files** were uploaded. The running local add-on was not modified.
+- Next: run broader Python compatibility checks, review archive-core/backfill interfaces before optional HA wiring, and independently diagnose the unresolved HDO token behavior. No production deployment or upstream submission authorized.
+
 ## Track A — HDO token regression (priority)
 
 Observed in the running v0.4.8 add-on after successful DIP login on 2026-11-15:
