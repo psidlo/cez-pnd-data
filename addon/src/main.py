@@ -450,8 +450,8 @@ def create_config() -> Dict[str, Dict[str, Any]]:
                 # No electrometers configured - this should fail validation elsewhere
                 config["cez"]["electrometers"] = []
 
-    except ValueError as e:
-        logger.error(f"Invalid electrometers configuration: {e}")
+    except ValueError:
+        logger.error("Invalid electrometers configuration (details suppressed)")
         sys.exit(1)
 
     if config["cez"]["electrometer_id"] == "auto":
@@ -460,33 +460,29 @@ def create_config() -> Dict[str, Dict[str, Any]]:
     return config
 
 
+def log_startup_summary(config: Dict[str, Dict[str, Any]]) -> None:
+    """Report configuration completeness without printing account identifiers."""
+    logger.info("Starting CEZ PND add-on")
+    logger.info("CEZ account credentials configured")
+    selection = (
+        "automatic" if config["cez"].get("electrometer_id") is None else "configured"
+    )
+    logger.info("Electrometer selection: %s", selection)
+    count = len(config["cez"].get("electrometers") or [])
+    if count:
+        logger.info("Configured electrometers: %d", count)
+    else:
+        logger.warning("No electrometers configured - this may cause runtime errors")
+    logger.info("MQTT broker configuration loaded")
+
+
 async def main():
     """Main application entry point."""
     # Read configuration
     config = create_config()
 
-    # Log configuration (excluding password)
-    logger.info("Starting CEZ PND add-on")
-    logger.info(f"Email: {config['cez']['email']}")
-    logger.info(f"Electrometer ID: {config['cez']['electrometer_id'] or 'auto-detect'}")
-
-    # Log canonical electrometers list structure
-    if config["cez"].get("electrometers"):
-        electrometers = config["cez"]["electrometers"]
-        logger.info(f"Configured electrometers: {len(electrometers)}")
-        for i, electrometer in enumerate(electrometers, 1):
-            raw_ean = electrometer.get("ean", "")
-            if raw_ean and len(raw_ean) > 4:
-                ean_display = "*" * (len(raw_ean) - 4) + raw_ean[-4:]
-            else:
-                ean_display = "empty" if not raw_ean else raw_ean
-            logger.info(
-                f"  {i}. electrometer_id: {electrometer['electrometer_id']}, ean: {ean_display}"
-            )
-    else:
-        logger.warning("No electrometers configured - this may cause runtime errors")
-
-    logger.info(f"MQTT Host: {config['mqtt']['host']}:{config['mqtt']['port']}")
+    # Log only safe configuration indicators and counts.
+    log_startup_summary(config)
 
     # Create MQTT client
     mqtt_client = MQTTClientWrapper(
@@ -566,6 +562,6 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Application stopped by user")
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
+    except Exception:
+        logger.error("Fatal startup error (details suppressed)")
         sys.exit(1)
