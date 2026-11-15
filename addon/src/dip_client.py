@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 from urllib.parse import urlsplit
 
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+logger = logging.getLogger(__name__)
 
 DIP_PORTAL_URL = "https://dip.cezdistribuce.cz/irj/portal"
 SIGNALS_PATH_TEMPLATE = "prehled-om?path=supply-point-detail/signals/{ean}"
@@ -102,11 +105,14 @@ class DipClient:
                     "() => localStorage.getItem('dip-request-token') !== null",
                     timeout=self.DEFAULT_TIMEOUT,
                 )
-            except (TimeoutError, asyncio.TimeoutError, PlaywrightTimeoutError) as exc:
+            except (TimeoutError, asyncio.TimeoutError, PlaywrightTimeoutError):
                 diagnostics = await _safe_token_diagnostics(page, navigation_response)
+                # Structured, allowlisted facts remain visible when the caller
+                # correctly suppresses untrusted exception text.
+                logger.warning("HDO token acquisition failed (%s)", diagnostics)
                 raise DipTokenError(
                     f"Token not found in localStorage ({diagnostics})"
-                ) from exc
+                ) from None
 
             token = await page.evaluate(
                 "() => localStorage.getItem('dip-request-token')"
