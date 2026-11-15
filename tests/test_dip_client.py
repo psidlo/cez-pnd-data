@@ -331,7 +331,7 @@ def test_dip_maintenance_error_is_subclass_of_dip_fetch_error():
 
 
 @pytest.mark.asyncio
-async def test_token_timeout_reports_safe_page_flags_without_url_values():
+async def test_token_timeout_reports_safe_page_flags_without_url_values(caplog):
     page = _mock_page(
         wait_for_function_error=PlaywrightTimeoutError("Timeout 30000ms exceeded")
     )
@@ -360,6 +360,11 @@ async def test_token_timeout_reports_safe_page_flags_without_url_values():
     assert "SECRET_EAN" not in message
     assert "SECRET_TOKEN" not in message
     assert "https://" not in message
+    assert exc_info.value.__suppress_context__ is True
+    assert "HDO token acquisition failed" in caplog.text
+    assert "route=dip-signals-page" in caplog.text
+    assert "SECRET_EAN" not in caplog.text
+    assert "SECRET_TOKEN" not in caplog.text
     page.close.assert_awaited_once()
 
 
