@@ -5,6 +5,7 @@ zero. Disabled installations must not construct ArchiveStore or touch SQLite.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date
 from typing import Any
@@ -32,6 +33,47 @@ def archive_settings_from_env(env: dict[str, str]) -> tuple[bool, str, int]:
     if not 1 <= max_days <= 62:
         raise ValueError("Archive max_days must be between 1 and 62")
     return True, start_date, max_days
+
+
+def archive_meters_from_env(
+    env: dict[str, str], mqtt_meters: list[dict]
+) -> list[dict]:
+    """Choose archival meters independently from MQTT discovery.
+
+    The legacy add-on may publish one current meter while archiving older
+    meters belonging to the same supply. No real EAN/ID defaults are stored.
+    """
+    raw = str(env.get("CEZ_ARCHIVE_METER_IDS", "[]"))
+    try:
+        identifiers = json.loads(raw)
+    except (TypeError, ValueError):
+        raise ValueError("Archive meter list must be a JSON array") from None
+    if not isinstance(identifiers, list) or len(identifiers) > 32 or any(
+        not isinstance(value, str)
+        or not value.isdecimal()
+        or not value
+        for value in identifiers
+    ):
+        raise ValueError("Archive meter list requires numeric ID strings") from None
+
+    selected = list(dict.fromkeys(identifiers))
+    if not selected:
+        # Safe fallback only for configurations without a separate list.
+        return list(mqtt_meters)
+
+    imported = str(env.get("CEZ_IMPORT_EAN", "")).strip()
+    exported = str(env.get("CEZ_EXPORT_EAN", "")).strip()
+    if bool(imported) != bool(exported):
+        raise ValueError("Archive EAN pair must be both set or both absent")
+    meters = []
+    for meter_id in selected:
+        entry = {"electrometer_id": meter_id}
+        if imported and exported:
+            entry.update(
+                archive_import_ean=imported, archive_export_ean=exported
+            )
+        meters.append(entry)
+    return meters
 
 
 class ArchiveCycle:
