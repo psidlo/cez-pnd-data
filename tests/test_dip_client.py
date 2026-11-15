@@ -87,7 +87,9 @@ async def test_fetch_hdo_token_not_found_in_local_storage():
 
 @pytest.mark.asyncio
 async def test_fetch_hdo_playwright_timeout_is_token_error():
-    page = _mock_page(wait_for_function_error=PlaywrightTimeoutError("Timeout 30000ms exceeded"))
+    page = _mock_page(
+        wait_for_function_error=PlaywrightTimeoutError("Timeout 30000ms exceeded")
+    )
     context = _mock_context(page)
 
     with pytest.raises(DipTokenError, match="Token not found in localStorage"):
