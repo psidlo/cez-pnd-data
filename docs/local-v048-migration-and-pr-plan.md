@@ -16,6 +16,29 @@ Honza's `fix/mqtt-recovery-and-upgrade-compatibility` is an **older ancestor of 
 
 The upstream and Honza fork have the same blob SHA for `addon/src/dip_client.py` (`44abb4c653f0514cc7e2c374538c272ca227d09b`). Both currently wait 30 s on `localStorage.getItem('dip-request-token')`; PR #18 does not fix token acquisition.
 
+## Audit of the actual local v0.4.8 archive (2026-11-15)
+
+A source backup named `cez_pnd_external_261115.tar.gz` was received and inspected **outside GitHub**, not pushed. The archive contains 16 active files under `addons/cez_pnd_external` and multiple historical local backups; the latter are excluded from any publication.
+
+Computed Git blob hashes of active files were compared against both repository trees:
+
+| Active local file(s) | Compared with original upstream | Compared with Honza main |
+|---|---|---|
+| `src/dip_client.py` | Identical | Identical |
+| `src/auth.py`, `src/hdo_parser.py`, `src/session_manager.py` | Identical | Different (Honza has other fixes) |
+| `src/archive.py` | Local-only | Local-only |
+| `src/main.py`, `src/orchestrator.py`, `src/mqtt_publisher.py`, `src/parser.py` | Different | Different |
+| `config.yaml`, `run.sh` | Different | Different |
+| `Dockerfile`, `requirements.txt`, `src/cookie_utils.py`, `src/__init__.py` | Identical | Most unchanged |
+
+Security: the active local add-on `config.yaml` contains a concrete local MQTT broker address and real electricity-supply identifiers; `run.sh` contains hard-coded supply-point identifiers and meter-specific archive defaults. They must **never** be copied verbatim into a public branch. Inspect any old backup contents separately before considering publication. No credentials, database content, private identifiers or unreviewed whole-tree snapshot have been committed.
+
+A synthetic test of `src/archive.py` found an additional **real bug**: `pnd_combined_15m.end_local_iso` assumes the date part of a non-`24:00` timestamp equals `day`. The last interval of 2026-11-14 with real endpoint `15.11.2026 00:00` becomes `2026-11-14T00:00:00` rather than `2026-11-15T00:00:00`. Proposed archive SQL uses the source timestamp's DD.MM.YYYY date unless the special `24:00` representation applies. Five synthetic tests passed offline for this correction, including repeated-day idempotence, incomplete refresh preservation, missing-value handling and DST duplicated wall-clock times. These are **not** yet upstream CI results.
+
+Archive extraction found no deployable source-level fix for the DIP token: local `dip_client.py` is byte-for-byte the upstream one. The token root cause still requires controlled browser diagnostics.
+
+Candidate split: `feat/pnd-archive-core` (standalone SQLite schema/projection, quality/DST regression tests), then separate `feat/pnd-archive-backfill` (fetch scheduling and backfill), then separate `feat/pnd-archive-addon-wiring` (optional config and runtime integration). Because there is no independently usable core import in the upstream currently, do not file an unconnected production PR as finished until dependencies and compatibility are resolved.
+
 ## Track A — HDO token regression (priority)
 
 Observed in the running v0.4.8 add-on after successful DIP login on 2026-11-15:
