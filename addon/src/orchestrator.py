@@ -108,12 +108,14 @@ class Orchestrator:
         fetcher: FetcherType,
         mqtt_publisher: Any,
         hdo_fetcher: HdoFetcherCallable | None = None,
+        archive_hook: Callable[[list[dict], list[dict]], Awaitable[None]] | None = None,
     ) -> None:
         self._config = config
         self._auth = auth_client
         self._fetcher: FetcherType = fetcher
         self._hdo_fetcher = hdo_fetcher
         self._mqtt = mqtt_publisher
+        self._archive_hook = archive_hook
 
     async def run_loop(self) -> None:
         """Starts polling loop. Runs until cancelled."""
@@ -226,6 +228,16 @@ class Orchestrator:
                     "[%s] No live browser context available for HDO — skipping HDO this cycle",
                     HDO_FETCH_ERROR,
                 )
+
+        if self._archive_hook is not None:
+            try:
+                await self._archive_hook(cookies, self._config.electrometers)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Database/network exception messages can contain private data.
+                # The normal PND + MQTT cycle remains independently functional.
+                logger.error("Optional PND archive cycle failed (details suppressed)")
 
         cycle_duration = (datetime.now() - cycle_start).total_seconds()
         logger.info(
