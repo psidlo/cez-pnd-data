@@ -186,3 +186,34 @@ async def test_batch_exception_text_is_never_logged(caplog):
         )
     assert result == {}
     assert PRIVATE not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [403, 429])
+async def test_rejected_warmup_aborts_before_real_fetch(status, caplog):
+    fetcher = PndFetcher()
+    warmup = AsyncMock()
+    warmup.status = status
+    context = AsyncMock()
+    context.request.post = AsyncMock(return_value=warmup)
+    browser = AsyncMock()
+    browser.new_context = AsyncMock(return_value=context)
+    playwright = AsyncMock()
+    playwright.chromium.launch = AsyncMock(return_value=browser)
+    manager = AsyncMock()
+    manager.__aenter__ = AsyncMock(return_value=playwright)
+    manager.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("addon.src.main._get_async_playwright", return_value=lambda: manager),
+        patch("addon.src.main.asyncio.sleep", new_callable=AsyncMock),
+        caplog.at_level(logging.DEBUG),
+    ):
+        with pytest.raises(PndRequestRejected) as caught:
+            await fetcher.fetch_all(
+                [], "synthetic-meter", [{"id": -1003, "name": "profile_all"}]
+            )
+    assert caught.value.status_code == status
+    assert context.request.post.await_count == 1
+    assert fetcher.cooldown_seconds_remaining > 0
+    assert PRIVATE not in caplog.text
