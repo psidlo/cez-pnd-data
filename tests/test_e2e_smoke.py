@@ -545,7 +545,7 @@ class TestFull17SensorPipeline:
                 cookies=fake_cookies,
                 reused=False,
                 context=mock_context,
-                browser=mock_browser
+                browser=mock_browser,
             )
 
         auth_client = PlaywrightAuthClient(creds, store, login_runner=fake_login)
@@ -615,7 +615,7 @@ class TestFull17SensorPipeline:
                 cookies=fake_cookies,
                 reused=False,
                 context=mock_context,
-                browser=mock_browser
+                browser=mock_browser,
             )
 
         auth_client = PlaywrightAuthClient(creds, store, login_runner=fake_login)
