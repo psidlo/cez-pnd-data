@@ -254,12 +254,10 @@ class ArchiveStore:
                     prev_good = len(old_keys)
                     # Keep the last-known good data if a new PND response is incomplete.
                     if old_good and old_good[0] and (not endpoint_ok or new_good < prev_good or degraded):
-                        LOGGER.warning('Archive %s meter=%s: refreshed profile still missing valid end-of-day '
-                                       'reading or lost valid rows; keeping existing measurement', day, meter_id)
+                        LOGGER.warning('Archive: refreshed profile incomplete; preserving existing measurements')
                         continue
                     if not endpoint_ok:
-                        LOGGER.warning('Archive %s meter=%s: last 15-min interval still unavailable at PND '
-                                       '(end stamp/status invalid); keeping a visible gap', day, meter_id)
+                        LOGGER.warning('Archive: final 15-minute interval unavailable; retaining gap')
                 self.db.execute("""INSERT INTO assembly_responses
                     (meter_id, day, assembly_id, assembly_name, fetched_at_utc,
                      has_data, response_rows, response_json)
@@ -285,7 +283,7 @@ class ArchiveStore:
                     # PND's "23:59" final sentinel may contain null measurements;
                     # retain it as a raw row rather than fabricating a 15min value.
                     if 'date' not in ids or not ({'import','export'} & set(ids)):
-                        LOGGER.warning('Archive: unrecognized profile columns for %s on %s', meter_id, day)
+                        LOGGER.warning('Archive: unrecognized profile columns; raw data retained')
                         continue
                     observed_meter_ids = {
                         str(c.get('name', '')).rsplit('/', 1)[1]
@@ -293,8 +291,7 @@ class ArchiveStore:
                         if str(c.get('name', '')).startswith(('+A/', '-A/', 'Rv/'))
                     }
                     if observed_meter_ids and observed_meter_ids != {str(meter_id)}:
-                        LOGGER.error('Archive: meter mismatch day=%s requested=%s columns=%s; raw response preserved, intervals skipped',
-                                     day, meter_id, sorted(observed_meter_ids))
+                        LOGGER.error('Archive: profile meter mismatch; raw data retained, intervals skipped')
                         continue
                     # Filter next-day spill-over and any redundant 23:59 sentinel;
                     # only replace the previous profile after all checks above.
