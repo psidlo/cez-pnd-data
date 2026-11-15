@@ -18,6 +18,7 @@ import paho.mqtt.client as mqtt_client
 from .auth import DEFAULT_USER_AGENT, PND_BASE_URL, PlaywrightAuthClient
 from .dip_client import DipClient
 from .mqtt_publisher import MqttPublisher
+from .pnd_history import pnd_fetch_window
 from .orchestrator import Orchestrator, OrchestratorConfig, SessionExpiredError
 from .session_manager import CredentialsProvider, SessionStore
 
@@ -144,6 +145,9 @@ class PndFetcher:
         cookies: list,
         meter_id: str,
         assembly_configs: list,
+        *,
+        archive_day: datetime | None = None,
+        archive_mode: bool = False,
     ) -> Dict[str, Any]:
         """Fetch all assemblies in a single browser context per cycle.
 
@@ -157,9 +161,11 @@ class PndFetcher:
         """
         from datetime import datetime, timedelta
 
+        if not assembly_configs:
+            return {}
         today = datetime.now()
-        date_from = today.strftime("%d.%m.%Y 00:00")
-        date_to = today.strftime("%d.%m.%Y 23:59")
+        window = pnd_fetch_window(archive_day=archive_day, archive_mode=archive_mode)
+        date_from, date_to = window.date_from, window.date_to
 
         async_playwright = _get_async_playwright()
         async with async_playwright() as pw:
@@ -210,19 +216,33 @@ class PndFetcher:
 
                     try:
                         payload = await self._fetch_one_in_context(
-                            context, meter_id, assembly_id, date_from, date_to
+                            context,
+                            meter_id,
+                            assembly_id,
+                            date_from,
+                            (
+                                window.profile_date_to
+                                if archive_mode and assembly_name == "profile_all"
+                                else date_to
+                            ),
                         )
                     except Exception as e:
+                        if archive_mode:
+                            # Preserve the failure for the caller's cooldown.
+                            # Do not interpolate sensitive API errors here.
+                            raise
                         logger.error(
-                            "Assembly %s failed for meter %s: %s — continuing",
+                            "Assembly %s failed for meter %s: %s — continuing"
                             assembly_name,
                             meter_id,
                             e,
                         )
                         continue
 
-                    if config.get("fallback_yesterday") and not payload.get(
-                        "hasData", True
+                    if (
+                        not archive_mode
+                        and config.get("fallback_yesterday")
+                        and not payload.get("hasData", True)
                     ):
                         logger.warning(
                             "Assembly %s has no data for today, retrying yesterday",
@@ -247,7 +267,9 @@ class PndFetcher:
                             )
                             continue
 
-                    if payload and payload.get("hasData"):
+                    if payload is not None and (
+                        payload.get("hasData") or archive_mode
+                    ):
                         results[assembly_name] = payload
                     else:
                         logger.warning(
