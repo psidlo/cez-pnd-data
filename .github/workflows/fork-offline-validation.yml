@@ -28,7 +28,7 @@ concurrency:
 jobs:
   offline-tests:
     name: Offline tests / Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -69,4 +69,4 @@ jobs:
           bash -n addon/run.sh
 
       - name: Run synthetic tests with all network sockets blocked
-        run: python -m pytest -q -o addopts='' --disable-socket --tb=short tests
+        run: python -m pytest -q -o addopts='' --disable-socket --allow-unix-socket --tb=short tests
