@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 import paho.mqtt.client as mqtt_client
 
 from .auth import DEFAULT_USER_AGENT, PND_BASE_URL, PlaywrightAuthClient
+from .archive_runtime import ArchiveCycle, archive_settings_from_env
 from .dip_client import DipClient
 from .mqtt_publisher import MqttPublisher
 from .pnd_history import pnd_fetch_window
@@ -567,8 +568,11 @@ def log_startup_summary(config: Dict[str, Dict[str, Any]]) -> None:
 
 async def main():
     """Main application entry point."""
-    # Read configuration
+    # Read configuration. Disabled by default; no archive is opened when off.
     config = create_config()
+    archive_enabled, archive_start_date, archive_max_days = archive_settings_from_env(
+        os.environ
+    )
 
     # Log only safe configuration indicators and counts.
     log_startup_summary(config)
@@ -592,6 +596,7 @@ async def main():
     # These will be replaced inside the async with block
     pnd_fetcher = None
     hdo_fetcher = None
+    archive_cycle: ArchiveCycle | None = None
 
     mqtt_publisher = MqttPublisher(
         mqtt_client,
@@ -606,10 +611,18 @@ async def main():
     )
 
     async def run_orchestrator_with_session():
-        nonlocal pnd_fetcher, hdo_fetcher
+        nonlocal pnd_fetcher, hdo_fetcher, archive_cycle
 
-        pnd_fetcher = PndFetcher().fetch
+        pnd_client = PndFetcher()
+        pnd_fetcher = pnd_client.fetch
         hdo_fetcher = DipClient().fetch_hdo
+        if archive_enabled:
+            archive_cycle = ArchiveCycle(
+                pnd_client,
+                start_date=archive_start_date,
+                max_days=archive_max_days,
+                rejection_error=PndRequestRejected,
+            )
 
         orchestrator = Orchestrator(
             config=orchestrator_config,
@@ -617,6 +630,7 @@ async def main():
             fetcher=pnd_fetcher,
             mqtt_publisher=mqtt_publisher,
             hdo_fetcher=hdo_fetcher,
+            archive_hook=archive_cycle.run if archive_cycle is not None else None,
         )
 
         await orchestrator.run_loop()
@@ -644,6 +658,8 @@ async def main():
         logger.info("Shutting down...")
         await auth_client.close()
         mqtt_publisher.stop()
+        if archive_cycle is not None:
+            archive_cycle.close()
 
 
 if __name__ == "__main__":
