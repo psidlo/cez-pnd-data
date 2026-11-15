@@ -36,7 +36,9 @@ class AuthSession:
     @property
     def has_live_context(self) -> bool:
         # Playwright BrowserContext has no .closed property; check browser connection instead
-        return self.context is not None and (self.browser is not None and self.browser.is_connected())
+        return self.context is not None and (
+            self.browser is not None and self.browser.is_connected()
+        )
 
     async def close(self) -> None:
         if self.context:
@@ -69,7 +71,11 @@ class PlaywrightAuthClient:
         if state and not self._session_store.is_expired(state):
             live_ctx = self._session_store.get_live_context()
             live_browser = self._session_store.get_live_browser()
-            if live_ctx is not None and live_browser is not None and live_browser.is_connected():
+            if (
+                live_ctx is not None
+                and live_browser is not None
+                and live_browser.is_connected()
+            )
                 return AuthSession(
                     cookies=state.cookies,
                     reused=True,
