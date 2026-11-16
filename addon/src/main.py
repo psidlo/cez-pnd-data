@@ -11,14 +11,29 @@ import logging
 import os
 import signal
 import sys
+import time
+from datetime import datetime
+from threading import Event
 from typing import Any, Dict, List, Optional
 
 import paho.mqtt.client as mqtt_client
 
+from .archive_runtime import (
+    ArchiveCycle,
+    archive_meters_from_env,
+    archive_settings_from_env,
+)
 from .auth import DEFAULT_USER_AGENT, PND_BASE_URL, PlaywrightAuthClient
 from .dip_client import DipClient
 from .mqtt_publisher import MqttPublisher
 from .orchestrator import Orchestrator, OrchestratorConfig, SessionExpiredError
+from .pnd_history import pnd_fetch_window
+from .pnd_response_safety import (
+    REJECTION_COOLDOWN_SECONDS,
+    REJECTION_STATUS_CODES,
+    safe_content_kind,
+    safe_html_category,
+)
 from .session_manager import CredentialsProvider, SessionStore
 
 PND_DATA_URL = "https://pnd.cezdistribuce.cz/cezpnd2/external/data"
@@ -30,6 +45,10 @@ class PndFetchError(Exception):
     def __init__(self, message: str, status_code: Optional[int] = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+
+
+class PndRequestRejected(PndFetchError):
+    """CEZ PND rejected a request; temporarily avoid further requests."""
 
 
 # Configure logging
@@ -66,6 +85,32 @@ def build_pnd_payload(
 class PndFetcher:
     def __init__(self, electrometer_id: Optional[str] = None) -> None:
         self._electrometer_id = electrometer_id
+        self._blocked_until_monotonic = 0.0
+
+    @property
+    def cooldown_seconds_remaining(self) -> float:
+        """Remaining in-process cooldown; do not share raw identifiers."""
+        return max(0.0, self._blocked_until_monotonic - time.monotonic())
+
+    def _begin_rejection_backoff(self) -> None:
+        self._blocked_until_monotonic = max(
+            self._blocked_until_monotonic,
+            time.monotonic() + REJECTION_COOLDOWN_SECONDS,
+        )
+        logger.warning("PND request rejected; pausing PND requests for 12 hours")
+
+    def _check_rejection_backoff(self) -> None:
+        if self.cooldown_seconds_remaining > 0:
+            raise PndRequestRejected("PND rejection cooldown active")
+
+    def _check_warmup_rejection(self, response: Any) -> None:
+        status = getattr(response, "status", None)
+        if type(status) is int and status in REJECTION_STATUS_CODES:
+            self._begin_rejection_backoff()
+            raise PndRequestRejected(
+                f"PND portal rejected warmup request (HTTP {status})",
+                status_code=status,
+            )
 
     @staticmethod
     async def _create_browser_context(browser: Any) -> Any:
@@ -85,6 +130,7 @@ class PndFetcher:
         date_to: str,
         electrometer_id: str | None = None,
     ) -> Dict[str, Any]:
+        self._check_rejection_backoff()
         async_playwright = _get_async_playwright()
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
@@ -103,8 +149,8 @@ class PndFetcher:
                     )
                     await page.close()
                     await asyncio.sleep(3)
-                except Exception as e:
-                    logger.debug("PND dashboard navigation failed (non-fatal): %s", e)
+                except Exception:
+                    logger.debug("PND dashboard navigation failed (details suppressed)")
 
                 effective_electrometer_id = electrometer_id or self._electrometer_id
 
@@ -124,11 +170,14 @@ class PndFetcher:
                         data=json.dumps(form_payload),
                         headers={"Content-Type": "application/json"},
                     )
+                    self._check_warmup_rejection(warmup_response)
                     logger.debug(
                         "Warmup status: %d (expected 400)", warmup_response.status
                     )
-                except Exception as e:
-                    logger.debug("Warmup failed: %s (expected)", e)
+                except PndRequestRejected:
+                    raise
+                except Exception:
+                    logger.debug("Warmup failed (details suppressed)")
 
                 await asyncio.sleep(1)
 
@@ -144,6 +193,9 @@ class PndFetcher:
         cookies: list,
         meter_id: str,
         assembly_configs: list,
+        *,
+        archive_day: datetime | None = None,
+        archive_mode: bool = False,
     ) -> Dict[str, Any]:
         """Fetch all assemblies in a single browser context per cycle.
 
@@ -157,9 +209,12 @@ class PndFetcher:
         """
         from datetime import datetime, timedelta
 
+        if not assembly_configs:
+            return {}
+        self._check_rejection_backoff()
         today = datetime.now()
-        date_from = today.strftime("%d.%m.%Y 00:00")
-        date_to = today.strftime("%d.%m.%Y 23:59")
+        window = pnd_fetch_window(archive_day=archive_day, archive_mode=archive_mode)
+        date_from, date_to = window.date_from, window.date_to
 
         async_playwright = _get_async_playwright()
         async with async_playwright() as pw:
@@ -176,8 +231,8 @@ class PndFetcher:
                         PND_BASE_URL, wait_until="domcontentloaded", timeout=30_000
                     )
                     await page.close()
-                except Exception as e:
-                    logger.debug("PND navigation warmup failed (non-fatal): %s", e)
+                except Exception:
+                    logger.debug("PND navigation warmup failed (details suppressed)")
 
                 # Single WAF warmup POST using the first assembly
                 first_config = assembly_configs[0]
@@ -194,11 +249,14 @@ class PndFetcher:
                         data=json.dumps(warmup_payload),
                         headers={"Content-Type": "application/json"},
                     )
+                    self._check_warmup_rejection(warmup_response)
                     logger.debug(
                         "Warmup status: %d (expected 400)", warmup_response.status
                     )
-                except Exception as e:
-                    logger.debug("Warmup POST failed: %s (expected)", e)
+                except PndRequestRejected:
+                    raise
+                except Exception:
+                    logger.debug("Warmup POST failed (details suppressed)")
 
                 await asyncio.sleep(1)
 
@@ -210,19 +268,32 @@ class PndFetcher:
 
                     try:
                         payload = await self._fetch_one_in_context(
-                            context, meter_id, assembly_id, date_from, date_to
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "Assembly %s failed for meter %s: %s — continuing",
-                            assembly_name,
+                            context,
                             meter_id,
-                            e,
+                            assembly_id,
+                            date_from,
+                            (
+                                window.profile_date_to
+                                if archive_mode and assembly_name == "profile_all"
+                                else date_to
+                            ),
+                        )
+                    except PndRequestRejected:
+                        raise
+                    except Exception:
+                        if archive_mode:
+                            # Backfill must see failures for its retry tracking.
+                            raise
+                        logger.error(
+                            "Assembly %s failed (details suppressed) — continuing",
+                            assembly_name,
                         )
                         continue
 
-                    if config.get("fallback_yesterday") and not payload.get(
-                        "hasData", True
+                    if (
+                        not archive_mode
+                        and config.get("fallback_yesterday")
+                        and not payload.get("hasData", True)
                     ):
                         logger.warning(
                             "Assembly %s has no data for today, retrying yesterday",
@@ -238,22 +309,22 @@ class PndFetcher:
                                 yesterday_from,
                                 date_from,
                             )
-                        except Exception as e:
+                        except PndRequestRejected:
+                            raise
+                        except Exception:
                             logger.error(
-                                "Assembly %s yesterday-fallback failed for meter %s: %s",
+                                "Assembly %s yesterday-fallback failed "
+                                "(details suppressed)",
                                 assembly_name,
-                                meter_id,
-                                e,
                             )
                             continue
 
-                    if payload and payload.get("hasData"):
+                    if payload is not None and (payload.get("hasData") or archive_mode):
                         results[assembly_name] = payload
                     else:
                         logger.warning(
-                            "Assembly %s has no data for meter %s",
+                            "Assembly %s has no data",
                             assembly_name,
-                            meter_id,
                         )
 
                 return results
@@ -273,53 +344,76 @@ class PndFetcher:
         payload = build_pnd_payload(assembly_id, date_from, date_to, meter_id)
         form_payload = {k: ("" if v is None else v) for k, v in payload.items()}
 
+        self._check_rejection_backoff()
         response = await context.request.post(PND_DATA_URL, data=form_payload)
-
-        if response.status == 302:
-            raise SessionExpiredError("PND fetch redirected (302) - session expired")
-        if response.status != 200:
+        status = response.status
+        if type(status) is not int or not (100 <= status <= 599):
+            raise PndFetchError("PND response has invalid HTTP status")
+        if status in (302, 401):
+            raise SessionExpiredError(f"PND session expired (HTTP {status})")
+        if status in REJECTION_STATUS_CODES:
+            self._begin_rejection_backoff()
+            raise PndRequestRejected(
+                f"PND portal rejected request (HTTP {status})",
+                status_code=status,
+            )
+        if status != 200:
             raise PndFetchError(
-                f"PND fetch failed with status {response.status}",
-                status_code=response.status,
+                f"PND fetch failed with status {status}", status_code=status
             )
 
-        headers_dict = response.headers or {}
-        content_type = (
-            headers_dict.get("content-type", "") if hasattr(headers_dict, "get") else ""
-        )
-        if "application/json" not in content_type.lower():
-            try:
-                text = await response.text()
-            except Exception:
-                text = "(body unavailable)"
+        headers = response.headers or {}
+        content_type = headers.get("content-type") if hasattr(headers, "get") else None
+        kind = safe_content_kind(content_type)
+        if kind != "json":
+            category = "not-html"
+            if kind == "html":
+                try:
+                    category = safe_html_category(await response.text())
+                except Exception:
+                    category = "unknown"
+                if category == "portal-rejection":
+                    self._begin_rejection_backoff()
+                    raise PndRequestRejected(
+                        "PND portal rejected request (HTML response)",
+                        status_code=status,
+                    )
+                if category == "login-page":
+                    raise SessionExpiredError("PND fetch returned login page")
             logger.warning(
-                "PND fetch returned non-JSON response (Content-Type: %s): %s",
-                content_type,
-                text[:500] if text else "(empty)",
+                "PND fetch returned non-JSON response (kind=%s, category=%s)",
+                kind,
+                category,
             )
             raise PndFetchError(
-                f"PND fetch returned non-JSON response (Content-Type: {content_type})"
+                f"PND fetch returned non-JSON response "
+                f"(kind={kind}, category={category})",
+                status_code=status,
             )
 
         try:
             data: Dict[str, Any] = await response.json()
-        except Exception as e:
-            try:
-                text = await response.text()
-            except Exception:
-                text = "(body unavailable)"
-            logger.warning(
-                "PND fetch JSON parse failed: %s, response: %s",
-                e,
-                text[:500] if text else "(empty)",
+        except Exception:
+            logger.warning("PND fetch JSON parse failed (details suppressed)")
+            raise PndFetchError(
+                "PND fetch JSON parse failed", status_code=status
+            ) from None
+        if not isinstance(data, dict):
+            raise PndFetchError(
+                "PND JSON response is not an object", status_code=status
             )
-            raise PndFetchError(f"PND fetch JSON parse failed: {e}")
-
+        indicator = data.get("hasData")
+        if indicator is True:
+            safe_indicator = "true"
+        elif indicator is False:
+            safe_indicator = "false"
+        else:
+            safe_indicator = "unknown"
         logger.debug(
             "PND fetch assembly=%d status=%d hasData=%s",
             assembly_id,
-            response.status,
-            data.get("hasData"),
+            status,
+            safe_indicator,
         )
         return data
 
@@ -333,6 +427,23 @@ class MQTTClientWrapper:
         self._client.username_pw_set(username, password)
         self._host = host
         self._port = port
+        self._connected = Event()
+        self._on_connected = None
+        self._pending: list[Any] = []
+        self._client.on_connect = self._handle_connect
+        self._client.reconnect_delay_set(min_delay=1, max_delay=60)
+
+    def set_on_connected(self, callback):
+        """Run the publisher's retained announcements after every CONNACK."""
+        self._on_connected = callback
+
+    def _handle_connect(self, client, userdata, flags, reason_code, properties):
+        if reason_code != 0:
+            logger.warning("MQTT connection refused (details suppressed)")
+            return
+        if self._on_connected is not None:
+            self._on_connected()
+        self._connected.set()
 
     def will_set(self, topic: str, payload: str, qos: int = 1, retain: bool = True):
         """Set Last Will and Testament."""
@@ -340,15 +451,45 @@ class MQTTClientWrapper:
 
     def connect(self):
         """Connect to MQTT broker."""
+        self._connected.clear()
         self._client.connect(self._host, self._port, 60)
+        self._client.loop_start()
+        if not self._connected.wait(timeout=15):
+            self._client.disconnect()
+            self._client.loop_stop()
+            raise ConnectionError("MQTT connection acknowledgement timed out")
 
     def publish(self, topic: str, payload: str, qos: int = 1, retain: bool = True):
         """Publish a message to MQTT broker."""
-        self._client.publish(topic, payload, qos, retain)
+        info = self._client.publish(topic, payload, qos, retain)
+        # Keep only unacknowledged deliveries; never wait on the network thread.
+        pending = []
+        for item in self._pending:
+            try:
+                if not item.is_published():
+                    pending.append(item)
+            except (RuntimeError, ValueError):
+                logger.warning("MQTT delivery pending recovery (details suppressed)")
+        self._pending = pending
+        self._pending.append(info)
 
     def disconnect(self):
         """Disconnect from MQTT broker."""
-        self._client.disconnect()
+        try:
+            deadline = time.monotonic() + 5
+            for info in self._pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                try:
+                    info.wait_for_publish(timeout=remaining)
+                except (RuntimeError, ValueError):
+                    logger.warning("MQTT delivery not acknowledged before shutdown")
+        finally:
+            self._client.disconnect()
+            self._client.loop_stop()
+            self._pending.clear()
+            self._connected.clear()
 
 
 def validate_electrometers_config(
@@ -450,8 +591,8 @@ def create_config() -> Dict[str, Dict[str, Any]]:
                 # No electrometers configured - this should fail validation elsewhere
                 config["cez"]["electrometers"] = []
 
-    except ValueError as e:
-        logger.error(f"Invalid electrometers configuration: {e}")
+    except ValueError:
+        logger.error("Invalid electrometers configuration (details suppressed)")
         sys.exit(1)
 
     if config["cez"]["electrometer_id"] == "auto":
@@ -460,33 +601,37 @@ def create_config() -> Dict[str, Dict[str, Any]]:
     return config
 
 
-async def main():
-    """Main application entry point."""
-    # Read configuration
-    config = create_config()
-
-    # Log configuration (excluding password)
+def log_startup_summary(config: Dict[str, Dict[str, Any]]) -> None:
+    """Report configuration completeness without printing account identifiers."""
     logger.info("Starting CEZ PND add-on")
-    logger.info(f"Email: {config['cez']['email']}")
-    logger.info(f"Electrometer ID: {config['cez']['electrometer_id'] or 'auto-detect'}")
-
-    # Log canonical electrometers list structure
-    if config["cez"].get("electrometers"):
-        electrometers = config["cez"]["electrometers"]
-        logger.info(f"Configured electrometers: {len(electrometers)}")
-        for i, electrometer in enumerate(electrometers, 1):
-            raw_ean = electrometer.get("ean", "")
-            if raw_ean and len(raw_ean) > 4:
-                ean_display = "*" * (len(raw_ean) - 4) + raw_ean[-4:]
-            else:
-                ean_display = "empty" if not raw_ean else raw_ean
-            logger.info(
-                f"  {i}. electrometer_id: {electrometer['electrometer_id']}, ean: {ean_display}"
-            )
+    logger.info("CEZ account credentials configured")
+    selection = (
+        "automatic" if config["cez"].get("electrometer_id") is None else "configured"
+    )
+    logger.info("Electrometer selection: %s", selection)
+    count = len(config["cez"].get("electrometers") or [])
+    if count:
+        logger.info("Configured electrometers: %d", count)
     else:
         logger.warning("No electrometers configured - this may cause runtime errors")
+    logger.info("MQTT broker configuration loaded")
 
-    logger.info(f"MQTT Host: {config['mqtt']['host']}:{config['mqtt']['port']}")
+
+async def main():
+    """Main application entry point."""
+    # Read configuration. Disabled by default; no archive is opened when off.
+    config = create_config()
+    archive_enabled, archive_start_date, archive_max_days = archive_settings_from_env(
+        os.environ
+    )
+    archive_meters = (
+        archive_meters_from_env(os.environ, config["cez"]["electrometers"])
+        if archive_enabled
+        else []
+    )
+
+    # Log only safe configuration indicators and counts.
+    log_startup_summary(config)
 
     # Create MQTT client
     mqtt_client = MQTTClientWrapper(
@@ -507,6 +652,7 @@ async def main():
     # These will be replaced inside the async with block
     pnd_fetcher = None
     hdo_fetcher = None
+    archive_cycle: ArchiveCycle | None = None
 
     mqtt_publisher = MqttPublisher(
         mqtt_client,
@@ -521,10 +667,18 @@ async def main():
     )
 
     async def run_orchestrator_with_session():
-        nonlocal pnd_fetcher, hdo_fetcher
+        nonlocal pnd_fetcher, hdo_fetcher, archive_cycle
 
-        pnd_fetcher = PndFetcher().fetch
+        pnd_client = PndFetcher()
+        pnd_fetcher = pnd_client.fetch
         hdo_fetcher = DipClient().fetch_hdo
+        if archive_enabled:
+            archive_cycle = ArchiveCycle(
+                pnd_client,
+                start_date=archive_start_date,
+                max_days=archive_max_days,
+                rejection_error=PndRequestRejected,
+            )
 
         orchestrator = Orchestrator(
             config=orchestrator_config,
@@ -532,6 +686,15 @@ async def main():
             fetcher=pnd_fetcher,
             mqtt_publisher=mqtt_publisher,
             hdo_fetcher=hdo_fetcher,
+            archive_hook=(
+                (
+                    lambda cookies, _mqtt_meters: archive_cycle.run(
+                        cookies, archive_meters
+                    )
+                )
+                if archive_cycle is not None
+                else None
+            ),
         )
 
         await orchestrator.run_loop()
@@ -559,6 +722,8 @@ async def main():
         logger.info("Shutting down...")
         await auth_client.close()
         mqtt_publisher.stop()
+        if archive_cycle is not None:
+            archive_cycle.close()
 
 
 if __name__ == "__main__":
@@ -566,6 +731,6 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Application stopped by user")
-    except Exception as e:
-        logger.error(f"Fatal error: {e}")
+    except Exception:
+        logger.error("Fatal startup error (details suppressed)")
         sys.exit(1)

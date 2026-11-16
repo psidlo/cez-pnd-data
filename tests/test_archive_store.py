@@ -1,10 +1,10 @@
 """Synthetic-only regression tests: no real meter, EAN, or response data."""
+
 from __future__ import annotations
 
 from datetime import date
 
 from addon.src.archive import ArchiveStore
-
 
 COLUMNS = [
     {"id": "t", "name": "Datum"},
@@ -14,7 +14,12 @@ COLUMNS = [
 CONFIG = [{"name": "profile_all", "id": -1003}]
 
 
-def reading(timestamp: str, import_kw: str | None = "0,4", export_kw: str | None = "0,0", quality: str = "32") -> dict:
+def reading(
+    timestamp: str,
+    import_kw: str | None = "0,4",
+    export_kw: str | None = "0,0",
+    quality: str = "32",
+) -> dict:
     return {
         "t": {"v": timestamp},
         "i": {"v": import_kw, "s": quality},
@@ -22,7 +27,9 @@ def reading(timestamp: str, import_kw: str | None = "0,4", export_kw: str | None
     }
 
 
-def store_day(store: ArchiveStore, day: str, rows: list[dict], meter_id: str = "123") -> tuple[int, int]:
+def store_day(
+    store: ArchiveStore, day: str, rows: list[dict], meter_id: str = "123"
+) -> tuple[int, int]:
     return store.save_day(
         meter_id,
         date.fromisoformat(day),
@@ -36,7 +43,11 @@ def store_day(store: ArchiveStore, day: str, rows: list[dict], meter_id: str = "
 def test_interval_ending_at_next_day_midnight_uses_actual_timestamp_date(tmp_path):
     store = ArchiveStore(tmp_path / "archive.sqlite3")
     try:
-        assert store_day(store, "2026-11-14", [reading("14.11.2026 23:45"), reading("15.11.2026 00:00")]) == (1, 2)
+        assert store_day(
+            store,
+            "2026-11-14",
+            [reading("14.11.2026 23:45"), reading("15.11.2026 00:00")],
+        ) == (1, 2)
         data = store.db.execute(
             "SELECT timestamp_local, end_local_iso FROM pnd_combined_15m ORDER BY end_local_iso"
         ).fetchall()
@@ -52,9 +63,10 @@ def test_24_hour_sentinel_uses_following_midnight(tmp_path):
     store = ArchiveStore(tmp_path / "archive.sqlite3")
     try:
         store_day(store, "2026-11-14", [reading("14.11.2026 24:00")])
-        assert store.db.execute(
-            "SELECT end_local_iso FROM pnd_combined_15m"
-        ).fetchone()[0] == "2026-11-15T00:00:00"
+        assert (
+            store.db.execute("SELECT end_local_iso FROM pnd_combined_15m").fetchone()[0]
+            == "2026-11-15T00:00:00"
+        )
     finally:
         store.close()
 
@@ -65,9 +77,13 @@ def test_repeated_day_is_idempotent_and_degraded_refresh_is_ignored(tmp_path):
         rows = [reading("14.11.2026 23:45"), reading("15.11.2026 00:00")]
         assert store_day(store, "2026-11-14", rows) == (1, 2)
         assert store_day(store, "2026-11-14", rows) == (1, 2)
-        assert store.db.execute("SELECT count(*) FROM profile_intervals").fetchone() == (2,)
+        assert store.db.execute(
+            "SELECT count(*) FROM profile_intervals"
+        ).fetchone() == (2,)
         assert store_day(store, "2026-11-14", rows[:-1]) == (0, 0)
-        assert store.db.execute("SELECT count(*) FROM profile_intervals").fetchone() == (2,)
+        assert store.db.execute(
+            "SELECT count(*) FROM profile_intervals"
+        ).fetchone() == (2,)
     finally:
         store.close()
 
@@ -86,7 +102,11 @@ def test_missing_values_are_not_assigned_zero(tmp_path):
 def test_duplicate_autumn_dst_timestamps_keep_both_occurrences(tmp_path):
     store = ArchiveStore(tmp_path / "archive.sqlite3")
     try:
-        rows = [reading("25.10.2026 02:15", "0,2"), reading("25.10.2026 02:15", "0,3"), reading("26.10.2026 00:00")]
+        rows = [
+            reading("25.10.2026 02:15", "0,2"),
+            reading("25.10.2026 02:15", "0,3"),
+            reading("26.10.2026 00:00"),
+        ]
         store_day(store, "2026-10-25", rows)
         observed = store.db.execute(
             "SELECT occurrence, import_kw, quality FROM pnd_combined_15m WHERE timestamp_local='25.10.2026 02:15' ORDER BY occurrence"
@@ -118,9 +138,9 @@ def test_upgrade_known_legacy_view_without_losing_measurements(tmp_path):
     with sqlite3.connect(db_path) as db:
         db.execute("DROP VIEW pnd_combined_15m")
         db.execute(legacy_sql)
-        assert db.execute(
-            "SELECT end_local_iso FROM pnd_combined_15m"
-        ).fetchone() == ("2026-11-14T00:00:00",)
+        assert db.execute("SELECT end_local_iso FROM pnd_combined_15m").fetchone() == (
+            "2026-11-14T00:00:00",
+        )
 
     restored = ArchiveStore(db_path)
     try:
@@ -156,9 +176,9 @@ def test_unknown_existing_view_is_not_overwritten(tmp_path):
     with pytest.raises(RuntimeError, match="manual review required"):
         ArchiveStore(db_path)
     with sqlite3.connect(db_path) as db:
-        assert db.execute(
-            "SELECT custom_value FROM pnd_combined_15m"
-        ).fetchone() == (42,)
+        assert db.execute("SELECT custom_value FROM pnd_combined_15m").fetchone() == (
+            42,
+        )
 
 
 def test_profile_mismatch_logging_never_exposes_requested_or_observed_meter(

@@ -69,8 +69,10 @@ _SENSOR_DEFINITIONS: list[SensorDefinition] = [
     SensorDefinition(
         key="reactive",
         name="CEZ {id} Reactive Power / Jalový výkon",
+        # The legacy Rv column is labelled kW by PND; its physical meaning
+        # is not established. Preserve its value/unit without a false class.
         unit_of_measurement="kW",
-        device_class="reactive_power",
+        device_class=None,
         icon="mdi:sine-wave",
     ),
     # New reactive power sensors (from Tab 03/04, 15-min, var)
@@ -182,7 +184,7 @@ _HDO_SENSOR_DEFINITIONS: list[SensorDefinition] = [
         key="hdo_low_tariff_active",
         name="CEZ {id} HDO Low Tariff Active / HDO Nízký tarif aktivní",
         unit_of_measurement=None,
-        device_class="binary_sensor",
+        device_class=None,
         state_class=None,
     ),
     SensorDefinition(
@@ -323,8 +325,21 @@ class MqttPublisher:
             retain=True,
         )
 
+        set_callback = getattr(self._client, "set_on_connected", None)
+        if set_callback is not None:
+            set_callback(self._announce_connected)
         self._client.connect()
+        self._announce_online()
+        logger.info(
+            "MQTT publisher started, %d electrometer(s)", len(self._electrometers)
+        )
 
+    def _announce_connected(self) -> None:
+        """Restore retained availability/discovery on broker reconnect."""
+        self._announce_online()
+        self.publish_discovery()
+
+    def _announce_online(self) -> None:
         for elec in self._electrometers:
             meter_id = elec["electrometer_id"]
             self._client.publish(
@@ -337,6 +352,17 @@ class MqttPublisher:
             "MQTT publisher started, %d electrometer(s) online",
             len(self._electrometers),
         )
+
+    def _restore_connection(self) -> None:
+        """Restore retained discovery and availability on broker reconnect."""
+        self.publish_discovery()
+        for elec in self._electrometers:
+            self._client.publish(
+                self._availability_topic(elec["electrometer_id"]),
+                payload="online",
+                qos=1,
+                retain=True,
+            )
 
     def stop(self) -> None:
         """Publish offline availability for all meters and disconnect."""
@@ -369,7 +395,7 @@ class MqttPublisher:
                     qos=1,
                     retain=True,
                 )
-                logger.debug("Published discovery: %s", topic)
+                logger.debug("Published MQTT discovery configuration")
 
         self.publish_hdo_discovery()
 
@@ -399,7 +425,7 @@ class MqttPublisher:
     ) -> None:
         for key, value in readings.items():
             if key not in VALID_SENSOR_KEYS:
-                logger.warning("Ignoring unknown sensor key: %s", key)
+                logger.warning("Ignoring unknown sensor key (details suppressed)")
                 continue
             if value is None:
                 continue
@@ -411,7 +437,7 @@ class MqttPublisher:
                 qos=1,
                 retain=True,
             )
-            logger.debug("Published state: %s = %s", topic, value)
+            logger.debug("Published MQTT sensor state")
 
     def publish_hdo_state(
         self, hdo_data: Any, *, electrometer_id: str | None = None
@@ -439,7 +465,7 @@ class MqttPublisher:
                 qos=1,
                 retain=True,
             )
-            logger.debug("Published HDO state: %s = %s", topic, value)
+            logger.debug("Published HDO sensor state")
 
     def publish_hdo_discovery(self) -> None:
         """Publish MQTT Discovery config for all 4 HDO sensor entities of every electrometer."""
@@ -458,4 +484,4 @@ class MqttPublisher:
                     qos=1,
                     retain=True,
                 )
-                logger.debug("Published HDO discovery: %s", topic)
+                logger.debug("Published HDO discovery configuration")

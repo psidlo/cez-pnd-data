@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
+from urllib.parse import urlsplit
+
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+logger = logging.getLogger(__name__)
 
 DIP_PORTAL_URL = "https://dip.cezdistribuce.cz/irj/portal"
 SIGNALS_PATH_TEMPLATE = "prehled-om?path=supply-point-detail/signals/{ean}"
@@ -20,6 +26,60 @@ class DipMaintenanceError(DipFetchError):
     """Raised when DIP endpoint is temporarily unavailable (maintenance)."""
 
 
+def _location_category(url: Any) -> str:
+    """Never put a redirect URL (query, path identifiers) into error output."""
+    if not isinstance(url, str):
+        return "unavailable"
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme != "https":
+            return "other-origin"
+        if parsed.hostname == "dip.cezdistribuce.cz":
+            if parsed.path.rstrip("/") == "/irj/portal/prehled-om":
+                return "dip-signals-page"
+            if parsed.path.startswith("/irj/portal"):
+                return "dip-other-portal-page"
+            return "dip-other-page"
+        if parsed.hostname == "pnd.cezdistribuce.cz":
+            return "pnd-page"
+        return "other-origin"
+    except ValueError:
+        return "unavailable"
+
+
+async def _safe_token_diagnostics(page: Any, navigation_response: Any) -> str:
+    """Only return allowlisted diagnostic categories; no URLs or page values."""
+    route = _location_category(getattr(page, "url", None))
+    status = getattr(navigation_response, "status", None)
+    http = (
+        str(status) if type(status) is int and 100 <= status <= 599 else "unavailable"
+    )
+    ready, login, session_token = "unavailable", "unavailable", "unavailable"
+    try:
+        result = await asyncio.wait_for(
+            page.evaluate("""() => ({
+                  ready: document.readyState,
+                  login: Boolean(document.querySelector('input[name="username"]')),
+                  sessionToken: sessionStorage.getItem('dip-request-token') !== null
+                })"""),
+            timeout=4,
+        )
+        if isinstance(result, dict):
+            if result.get("ready") in ("loading", "interactive", "complete"):
+                ready = result["ready"]
+            if type(result.get("login")) is bool:
+                login = str(result["login"]).lower()
+            if type(result.get("sessionToken")) is bool:
+                session_token = str(result["sessionToken"]).lower()
+    except Exception:
+        # Playwright errors can contain full URLs, so do not interpolate exc.
+        pass
+    return (
+        f"route={route}, navigation_http={http}, ready={ready}, "
+        f"login_form={login}, session_storage_has_token={session_token}"
+    )
+
+
 class DipClient:
     """DIP API client for HDO tariff data."""
 
@@ -32,7 +92,7 @@ class DipClient:
     async def fetch_hdo(self, context: Any, ean: str) -> dict[str, Any]:
         page = await context.new_page()
         try:
-            await page.goto(
+            navigation_response = await page.goto(
                 f"{DIP_PORTAL_URL}/prehled-om",
                 wait_until="domcontentloaded",
                 timeout=self.DEFAULT_TIMEOUT,
@@ -43,10 +103,14 @@ class DipClient:
                     "() => localStorage.getItem('dip-request-token') !== null",
                     timeout=self.DEFAULT_TIMEOUT,
                 )
-            except (TimeoutError, asyncio.TimeoutError) as exc:
+            except (TimeoutError, asyncio.TimeoutError, PlaywrightTimeoutError):
+                diagnostics = await _safe_token_diagnostics(page, navigation_response)
+                # Structured, allowlisted facts remain visible when the caller
+                # correctly suppresses untrusted exception text.
+                logger.warning("HDO token acquisition failed (%s)", diagnostics)
                 raise DipTokenError(
-                    "Token not found in localStorage — Angular may not have loaded"
-                ) from exc
+                    f"Token not found in localStorage ({diagnostics})"
+                ) from None
 
             token = await page.evaluate(
                 "() => localStorage.getItem('dip-request-token')"
@@ -73,6 +137,8 @@ class DipClient:
             )
 
             status = result["status"]
+            if type(status) is not int or not 100 <= status <= 599:
+                raise DipFetchError("Signals endpoint returned invalid HTTP status")
             content_type = result["contentType"]
             body = result["body"]
 
@@ -94,7 +160,9 @@ class DipClient:
 
         except (DipTokenError, DipFetchError):
             raise
-        except (asyncio.TimeoutError, Exception) as exc:
-            raise DipFetchError(f"Fetch failed: {exc}") from exc
+        except Exception:
+            # Browser errors may contain URLs, EANs or authentication tokens.
+            # Preserve the exception type without exposing untrusted details.
+            raise DipFetchError("Fetch failed: details suppressed") from None
         finally:
             await page.close()

@@ -81,7 +81,9 @@ class TestSensorDefinitions:
 
     def test_each_sensor_has_device_class(self) -> None:
         for d in get_sensor_definitions():
-            assert d.device_class, f"sensor {d.key} missing device_class"
+            assert (
+                d.device_class or d.key == "reactive"
+            ), f"sensor {d.key} missing device_class"
 
     def test_power_sensors_use_kw_unit(self) -> None:
         """Original power sensors (consumption, production) use kW."""
@@ -145,7 +147,7 @@ class TestSensorDefinitions:
         # reactive (original — keeps kW for backward compat)
         assert defs["reactive"].name == "CEZ {id} Reactive Power / Jalový výkon"
         assert defs["reactive"].unit_of_measurement == "kW"
-        assert defs["reactive"].device_class == "reactive_power"
+        assert defs["reactive"].device_class is None
         assert defs["reactive"].icon == "mdi:sine-wave"
 
     def test_valid_sensor_keys_matches_definitions(self) -> None:
@@ -222,7 +224,7 @@ class TestDiscoveryPayload:
     def test_reactive_sensor_uses_var_unit(self) -> None:
         payload = self._payload_for("reactive")
         assert payload["unit_of_measurement"] == "kW"
-        assert payload["device_class"] == "reactive_power"
+        assert payload["device_class"] is None
 
     def test_production_sensor_config(self) -> None:
         payload = self._payload_for("production")

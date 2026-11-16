@@ -15,7 +15,7 @@ import json
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -542,7 +542,10 @@ class TestFull17SensorPipeline:
             mock_browser.is_connected.return_value = True
             store.set_live_context(mock_context, mock_browser)
             return AuthSession(
-                cookies=fake_cookies, reused=False, context=mock_context, browser=mock_browser
+                cookies=fake_cookies,
+                reused=False,
+                context=mock_context,
+                browser=mock_browser,
             )
 
         auth_client = PlaywrightAuthClient(creds, store, login_runner=fake_login)
@@ -609,7 +612,10 @@ class TestFull17SensorPipeline:
             mock_browser.is_connected.return_value = True
             store.set_live_context(mock_context, mock_browser)
             return AuthSession(
-                cookies=fake_cookies, reused=False, context=mock_context, browser=mock_browser
+                cookies=fake_cookies,
+                reused=False,
+                context=mock_context,
+                browser=mock_browser,
             )
 
         auth_client = PlaywrightAuthClient(creds, store, login_runner=fake_login)
