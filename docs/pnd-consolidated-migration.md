@@ -28,8 +28,12 @@ network-loop fix. It is a review candidate, not a deployed add-on.
 - Portal rejection aborts historical requests and activates process-local
   cooldown. A restart resets that cooldown. Archive work is serial and shares a
   global daily-request budget; a large budget can delay normal polling.
-- Private response/exception details are suppressed in logs. Safe HDO timeout
-  diagnostics classify the failure; they do not repair missing DIP tokens.
+- Private response/exception details are suppressed in logs. Missing HDO tokens
+  now bootstrap through the authenticated page's DIP token endpoint instead of
+  waiting 30 seconds for Angular to populate localStorage. The portal's wrapped
+  JSON-string response is unwrapped, validated and passed to the signals request.
+  Token values and private responses are never logged. Rejected/HTML/invalid
+  token responses fail closed. Production HDO remains unverified until cutover.
 
 ## Configuration and downstream compatibility
 

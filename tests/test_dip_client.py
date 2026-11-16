@@ -39,6 +39,8 @@ def _mock_page(
         if evaluate_error:
             raise evaluate_error
         if args is None:
+            if wait_for_function_error:
+                raise wait_for_function_error
             return token
         return fetch_result or {
             "status": 200,
@@ -80,7 +82,7 @@ async def test_fetch_hdo_token_not_found_in_local_storage():
     page = _mock_page(wait_for_function_error=asyncio.TimeoutError())
     context = _mock_context(page)
 
-    with pytest.raises(DipTokenError, match="Token not found in localStorage"):
+    with pytest.raises(DipTokenError, match="Token bootstrap failed"):
         await DipClient().fetch_hdo(context, ean="123")
 
     page.close.assert_called_once()
@@ -93,7 +95,7 @@ async def test_fetch_hdo_playwright_timeout_is_token_error():
     )
     context = _mock_context(page)
 
-    with pytest.raises(DipTokenError, match="Token not found in localStorage"):
+    with pytest.raises(DipTokenError, match="Token bootstrap failed"):
         await DipClient().fetch_hdo(context, ean="123")
 
     page.close.assert_called_once()
@@ -104,7 +106,7 @@ async def test_fetch_hdo_empty_token():
     page = _mock_page(token="")
     context = _mock_context(page)
 
-    with pytest.raises(DipTokenError, match="Empty dip-request-token"):
+    with pytest.raises(DipTokenError, match="Token bootstrap failed"):
         await DipClient().fetch_hdo(context, ean="123")
 
     page.close.assert_called_once()
@@ -203,7 +205,7 @@ async def test_fetch_hdo_raises_fetch_error_on_generic_exception():
     page = _mock_page(evaluate_error=RuntimeError("something went wrong"))
     context = _mock_context(page)
 
-    with pytest.raises(DipFetchError, match="Fetch failed:"):
+    with pytest.raises(DipTokenError, match="Token bootstrap failed"):
         await DipClient().fetch_hdo(context, ean="123")
 
     page.close.assert_called_once()
@@ -298,15 +300,14 @@ async def test_fetch_hdo_navigates_to_dip_portal():
 
 
 @pytest.mark.asyncio
-async def test_fetch_hdo_waits_for_token_in_local_storage():
+async def test_fetch_hdo_bootstraps_token_without_waiting_for_angular():
     page = _mock_page()
     context = _mock_context(page)
 
     await DipClient().fetch_hdo(context, ean="123")
 
-    page.wait_for_function.assert_called_once()
-    call_args = page.wait_for_function.call_args
-    assert "localStorage.getItem('dip-request-token')" in call_args[0][0]
+    page.wait_for_function.assert_not_called()
+    assert "/rest-auth-api?path=/token/get" in page.evaluate.call_args_list[0].args[0]
     page.close.assert_called_once()
 
 
@@ -431,7 +432,8 @@ async def test_hdo_timeout_diagnostic_does_not_fetch_signals():
     with pytest.raises(DipTokenError):
         await DipClient().fetch_hdo(context, ean="synthetic")
 
-    page.evaluate.assert_awaited_once()
+    assert page.evaluate.await_count == 2
+    assert all(len(c.args) == 1 for c in page.evaluate.call_args_list)
     page.close.assert_awaited_once()
 
 
@@ -441,11 +443,10 @@ async def test_hdo_browser_exception_is_redacted():
     page = _mock_page(evaluate_error=RuntimeError(private))
     context = _mock_context(page)
 
-    with pytest.raises(DipFetchError, match="Fetch failed:") as error:
+    with pytest.raises(DipTokenError, match="Token bootstrap failed") as error:
         await DipClient().fetch_hdo(context, ean="synthetic")
 
     assert private not in str(error.value)
-    assert "details suppressed" in str(error.value)
     assert error.value.__suppress_context__ is True
     page.close.assert_awaited_once()
 

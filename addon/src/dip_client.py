@@ -4,14 +4,54 @@ import asyncio
 import json
 import logging
 from typing import Any
-from urllib.parse import urlsplit
-
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+from urllib.parse import quote, urlsplit
 
 logger = logging.getLogger(__name__)
 
 DIP_PORTAL_URL = "https://dip.cezdistribuce.cz/irj/portal"
 SIGNALS_PATH_TEMPLATE = "prehled-om?path=supply-point-detail/signals/{ean}"
+
+
+# The portal's AuthService refreshes /rest-auth-api?path=/token/get and its
+# HTTP interceptor unwraps response.data before storing dip-request-token.
+# Keep both requests in the authenticated browser page; never use anonymous
+# tokens, export the browser session, or persist a token in logs/files.
+TOKEN_BOOTSTRAP_JS = r"""async () => {
+    if (window.location.origin !== 'https://dip.cezdistribuce.cz') {
+        return {failure: 'other-origin'};
+    }
+    const valid = value => typeof value === 'string' && value.trim().length > 0
+        && !['null', 'undefined', '[object Object]'].includes(value);
+    try {
+        const stored = localStorage.getItem('dip-request-token');
+        if (valid(stored)) return stored;
+    } catch (_) { /* Storage restrictions must not prevent API bootstrap. */ }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+        const response = await fetch('/irj/portal/rest-auth-api?path=/token/get', {
+            credentials: 'same-origin', redirect: 'error', cache: 'no-store',
+            headers: {'Accept': 'application/json, text/plain, */*'},
+            signal: controller.signal
+        });
+        if ([400, 503].includes(response.status)) return {failure: 'maintenance'};
+        if (response.status !== 200) return {failure: 'http-error'};
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.toLowerCase().includes('application/json')) {
+            return {failure: 'non-json'};
+        }
+        const body = await response.json();
+        // Current DIP wraps its JSON string in {data: ...}. Accept the older
+        // direct-string / {token: ...} forms without stringifying objects.
+        const token = typeof body === 'string' ? body
+            : (body && typeof body === 'object' ? (body.data ?? body.token) : null);
+        return valid(token) ? token : {failure: 'invalid-token'};
+    } catch (_) {
+        return {failure: 'request-failed'};
+    } finally {
+        clearTimeout(timer);
+    }
+}"""
 
 
 class DipTokenError(Exception):
@@ -89,6 +129,24 @@ class DipClient:
     def _is_html_content_type(content_type: str | None) -> bool:
         return content_type is not None and "text/html" in content_type.lower()
 
+    async def _request_token(self, page: Any, navigation_response: Any) -> str:
+        """Bootstrap the DIP token explicitly, without waiting for Angular."""
+        try:
+            result = await page.evaluate(TOKEN_BOOTSTRAP_JS)
+        except Exception:
+            result = None
+        if (
+            isinstance(result, str)
+            and result.strip()
+            and result not in ("null", "undefined", "[object Object]")
+        ):
+            return result
+        if isinstance(result, dict) and result.get("failure") == "maintenance":
+            raise DipMaintenanceError("Token endpoint unavailable") from None
+        diagnostics = await _safe_token_diagnostics(page, navigation_response)
+        logger.warning("HDO token acquisition failed (%s)", diagnostics)
+        raise DipTokenError(f"Token bootstrap failed ({diagnostics})") from None
+
     async def fetch_hdo(self, context: Any, ean: str) -> dict[str, Any]:
         page = await context.new_page()
         try:
@@ -98,29 +156,15 @@ class DipClient:
                 timeout=self.DEFAULT_TIMEOUT,
             )
 
-            try:
-                await page.wait_for_function(
-                    "() => localStorage.getItem('dip-request-token') !== null",
-                    timeout=self.DEFAULT_TIMEOUT,
-                )
-            except (TimeoutError, asyncio.TimeoutError, PlaywrightTimeoutError):
-                diagnostics = await _safe_token_diagnostics(page, navigation_response)
-                # Structured, allowlisted facts remain visible when the caller
-                # correctly suppresses untrusted exception text.
-                logger.warning("HDO token acquisition failed (%s)", diagnostics)
-                raise DipTokenError(
-                    f"Token not found in localStorage ({diagnostics})"
-                ) from None
+            token = await self._request_token(page, navigation_response)
 
-            token = await page.evaluate(
-                "() => localStorage.getItem('dip-request-token')"
+            signals_url = f"{DIP_PORTAL_URL}/" + SIGNALS_PATH_TEMPLATE.format(
+                ean=quote(ean, safe="")
             )
-            if not token:
-                raise DipTokenError("Empty dip-request-token in localStorage")
-
             result = await page.evaluate(
                 """async (args) => {
                 const resp = await fetch(args.url, {
+                    credentials: 'same-origin', redirect: 'error', cache: 'no-store',
                     headers: {
                         'X-Request-Token': args.token,
                         'Accept': 'application/json, text/plain, */*'
@@ -131,7 +175,7 @@ class DipClient:
                 return { status: resp.status, contentType: contentType, body: text };
             }""",
                 {
-                    "url": f"{DIP_PORTAL_URL}/{SIGNALS_PATH_TEMPLATE.format(ean=ean)}",
+                    "url": signals_url,
                     "token": token,
                 },
             )
