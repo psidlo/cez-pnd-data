@@ -1,6 +1,6 @@
 # PND cutover checks and accepted limits
 
-Dated production verification evidence is maintained in [PR #2](https://github.com/psidlo/cez-pnd-data/pull/2). These checks define completion; the PR records which have actually passed.
+These criteria apply to each deployment. The runtime in [PR #2](https://github.com/psidlo/cez-pnd-data/pull/2) was validated in a local 0.4.9 deployment on 2026-11-17; release preparation is summarized in [0.4.9 notes](releases/0.4.9.md). Private backup paths, options and diagnostic records are not published.
 
 | Check | Acceptance criterion |
 | --- | --- |

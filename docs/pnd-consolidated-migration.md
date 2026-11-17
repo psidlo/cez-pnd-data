@@ -3,7 +3,9 @@
 This is the combined replacement for fork drafts #1–#6 and #11, reviewed against
 upstream main f1b2e3f47890eef191cfd2163a6f297968af4cd2 (still current on 2026-11-16).
 It includes the previously tested integration preview and the missing MQTT
-network-loop fix. It is a review candidate, not a deployed add-on.
+network-loop fix. Its runtime was deployed and validated as local 0.4.9 on
+2026-11-17; the public fork remains in PR #2 for review. The public manifest
+and private local installation have different identities.
 
 ## Resulting behavior
 
@@ -33,12 +35,14 @@ network-loop fix. It is a review candidate, not a deployed add-on.
   waiting 30 seconds for Angular to populate localStorage. The portal's wrapped
   JSON-string response is unwrapped, validated and passed to the signals request.
   Token values and private responses are never logged. Rejected/HTML/invalid
-  token responses fail closed. Production HDO remains unverified until cutover.
+  token responses fail closed. Production HDO authorization and accepted zoned
+  timestamps were verified during the 2026-11-17 local deployment.
 
 ## Configuration and downstream compatibility
 
-Public addon/config.yaml uses upstream slug cez-pnd and version 0.4.1. It is not
-a drop-in manifest for the existing local cez-pnd-external 0.4.8 installation.
+Public addon/config.yaml retains upstream slug cez-pnd and uses version 0.4.9.
+It is not a drop-in manifest for a local cez-pnd-external installation (upgraded
+from local 0.4.8 to 0.4.9 on 2026-11-17).
 For a controlled local update, preserve that installation's manifest identity,
 boot setting and private options; overlay reviewed runtime files and add archive
 schema/options without copying private defaults into Git. No parallel publisher.
@@ -50,7 +54,8 @@ independent. External broker options remain mqtt_host/port/user/password.
 
 No changes are required to Predbat, SolaX, the price archive or existing SQL
 consumers: the database path and pnd_combined_15m contract are preserved. Actual
-entity identity and SQL compatibility still require verification at deployment.
+entity identity and SQL compatibility were verified for the local 2026-11-17
+cutover and must be checked again for any other deployment.
 
 ## Controlled deployment and rollback
 
