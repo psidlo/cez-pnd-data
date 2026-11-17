@@ -1,6 +1,9 @@
 """Behavioral regressions found while preparing the local 0.4.8 cutover."""
 
 import asyncio
+import subprocess
+import sys
+import textwrap
 
 import pytest
 
@@ -95,3 +98,57 @@ async def test_external_cancellation_also_cleans_up_poll_task():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert cleanup.is_set()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Production uses POSIX SIGTERM")
+def test_real_sigterm_wakes_idle_main_and_completes_cleanup():
+    """The signal must wake a selector with no active I/O or poll timer."""
+    program = textwrap.dedent(
+        """
+        import asyncio
+        import os
+        import signal
+        import threading
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+
+        import addon.src.main as app
+
+        config = {
+            "cez": {"electrometers": [], "email": "synthetic@example.invalid"},
+            "mqtt": {"host": "unused", "port": 1883, "username": "", "password": ""},
+        }
+        app.create_config = lambda: config
+        app.archive_settings_from_env = lambda env: (False, None, 1)
+        app.log_startup_summary = lambda config: None
+        app.MQTTClientWrapper = MagicMock()
+        app.CredentialsProvider = MagicMock()
+        app.SessionStore = MagicMock()
+        auth = SimpleNamespace(close=AsyncMock())
+        publisher = SimpleNamespace(stop=MagicMock())
+        app.PlaywrightAuthClient = MagicMock(return_value=auth)
+        app.MqttPublisher = MagicMock(return_value=publisher)
+
+        async def idle_poll():
+            threading.Timer(
+                0.2, lambda: os.kill(os.getpid(), signal.SIGTERM)
+            ).start()
+            await asyncio.Event().wait()
+
+        app.Orchestrator = MagicMock(
+            return_value=SimpleNamespace(run_loop=idle_poll)
+        )
+        asyncio.run(app.main())
+        auth.close.assert_awaited_once()
+        publisher.stop.assert_called_once()
+        print("cleanup-complete")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    assert "cleanup-complete" in result.stdout

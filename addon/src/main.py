@@ -717,13 +717,13 @@ async def main():
         await orchestrator.run_loop()
 
     # Set up signal handlers for graceful shutdown
-    _ = asyncio.get_running_loop()
+    loop = asyncio.get_running_loop()
     shutdown_event = asyncio.Event()
 
     def signal_handler(signum, frame):
         """Handle shutdown signals."""
         logger.info(f"Received signal {signum}, shutting down...")
-        shutdown_event.set()
+        loop.call_soon_threadsafe(shutdown_event.set)
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
