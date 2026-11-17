@@ -188,9 +188,10 @@ Tab 17 (`daily_registers`) používá **yesterday fallback** — pokud pro dneš
 
 HDO signály se fetchují přes **DIP API** (ne PND):
 
-1. **Token request** → `GET /irj/portal/rest-auth-api?path=/token/get`
-2. **Signals request** → `GET /irj/portal/prehled-om?path=supply-point-detail/signals/{ean}` s `x-request-token` header
-3. **Parsing** → `parse_hdo_signals()` extrahuje aktuální tarif, další přepnutí, denní schedule
+1. **DIP initialization**: open `/irj/portal` in the shared authenticated browser context before the detail page; this completes backend authorization.
+2. **Token request** → `GET /irj/portal/rest-auth-api?path=/token/get`
+3. **Signals request** → `GET /irj/portal/prehled-om?path=supply-point-detail/signals/{ean}` s `x-request-token` header
+4. **Parsing** → `parse_hdo_signals()` extrahuje aktuální tarif, další přepnutí, denní schedule
 
 ## MQTT topicy
 
@@ -451,3 +452,5 @@ s vazbou každého elektroměru na konkrétní odběrné místo.
 ## Licence
 
 MIT
+
+HDO uses the current Europe/Prague date from dated weekly responses and publishes next-switch timestamps with UTC offsets. HTTP 400 wrapping application statusCode=401 is an authorization failure, not maintenance.

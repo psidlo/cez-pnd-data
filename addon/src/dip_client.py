@@ -6,6 +6,8 @@ import logging
 from typing import Any
 from urllib.parse import quote, urlsplit
 
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
 logger = logging.getLogger(__name__)
 
 DIP_PORTAL_URL = "https://dip.cezdistribuce.cz/irj/portal"
@@ -34,13 +36,21 @@ TOKEN_BOOTSTRAP_JS = r"""async () => {
             headers: {'Accept': 'application/json, text/plain, */*'},
             signal: controller.signal
         });
-        if ([400, 503].includes(response.status)) return {failure: 'maintenance'};
-        if (response.status !== 200) return {failure: 'http-error'};
+        if (response.status === 503) return {failure: 'maintenance'};
+        if (response.status === 401) return {failure: 'authentication'};
         const contentType = response.headers.get('content-type') || '';
         if (!contentType.toLowerCase().includes('application/json')) {
             return {failure: 'non-json'};
         }
         const body = await response.json();
+        const appStatus = body && typeof body === 'object' && Number.isInteger(body.statusCode)
+            ? body.statusCode : null;
+        // DIP may wrap an application-level 401 inside HTTP 400.
+        if (appStatus === 401) return {failure: 'authentication'};
+        if (appStatus === 503) return {failure: 'maintenance'};
+        if (response.status !== 200 || (appStatus !== null && appStatus >= 400)) {
+            return {failure: 'http-error'};
+        }
         // Current DIP wraps its JSON string in {data: ...}. Accept the older
         // direct-string / {token: ...} forms without stringifying objects.
         const token = typeof body === 'string' ? body
@@ -56,6 +66,10 @@ TOKEN_BOOTSTRAP_JS = r"""async () => {
 
 class DipTokenError(Exception):
     """Raised when token acquisition fails."""
+
+
+class DipAuthenticationError(DipTokenError):
+    """The DIP session is not authorized; this is not portal maintenance."""
 
 
 class DipFetchError(Exception):
@@ -141,6 +155,9 @@ class DipClient:
             and result not in ("null", "undefined", "[object Object]")
         ):
             return result
+        if isinstance(result, dict) and result.get("failure") == "authentication":
+            logger.warning("HDO DIP session is not authorized")
+            raise DipAuthenticationError("DIP session is not authorized") from None
         if isinstance(result, dict) and result.get("failure") == "maintenance":
             raise DipMaintenanceError("Token endpoint unavailable") from None
         diagnostics = await _safe_token_diagnostics(page, navigation_response)
@@ -150,6 +167,20 @@ class DipClient:
     async def fetch_hdo(self, context: Any, ean: str) -> dict[str, Any]:
         page = await context.new_page()
         try:
+            # The dashboard completes DIP backend authorization for a PND SSO
+            # session. Opening only the deep link can leave token/get at 401.
+            await page.goto(
+                DIP_PORTAL_URL,
+                wait_until="domcontentloaded",
+                timeout=self.DEFAULT_TIMEOUT,
+            )
+            try:
+                await page.wait_for_function(
+                    "() => Boolean(localStorage.getItem('dip-request-token'))",
+                    timeout=5_000,
+                )
+            except (TimeoutError, asyncio.TimeoutError, PlaywrightTimeoutError):
+                pass  # Explicit API bootstrap remains the bounded fallback.
             navigation_response = await page.goto(
                 f"{DIP_PORTAL_URL}/prehled-om",
                 wait_until="domcontentloaded",

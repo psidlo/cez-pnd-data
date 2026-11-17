@@ -74,3 +74,7 @@ blocks external sockets during synthetic tests, and retains lint/type, secrets,
 SAST, dependency audit, Docker/Trivy and SBOM jobs. Redundant fork-only workflow
 is removed. Advisory security jobs retain their inherited advisory status; a
 successful run does not establish a vulnerability-free production deployment.
+
+## Verified HDO authorization refinement (2026-11-17)
+
+The main DIP dashboard must initialize backend authorization before the detail page. Production diagnosis distinguished HTTP 400 wrapping statusCode=401 from maintenance; visiting the dashboard then yielded a token and HTTP 200 signals. The final client uses a bounded initialization wait with explicit API fallback. Dated schedules select the Prague-local day and next-switch timestamps include the UTC offset. Current operational acceptance results are maintained in PR #2.

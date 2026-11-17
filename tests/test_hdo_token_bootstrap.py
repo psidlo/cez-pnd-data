@@ -5,7 +5,6 @@ import shutil
 import subprocess
 
 import pytest
-
 from addon.src.dip_client import TOKEN_BOOTSTRAP_JS
 
 NODE = shutil.which("node")
@@ -99,7 +98,7 @@ def test_storage_access_exception_still_allows_endpoint_bootstrap():
 @pytest.mark.parametrize(
     "case,failure",
     [
-        ({"status": 401}, "http-error"),
+        ({"status": 401}, "authentication"),
         ({"status": 403}, "http-error"),
         ({"status": 429}, "http-error"),
         ({"status": 503}, "maintenance"),
@@ -124,3 +123,25 @@ def test_redirected_page_cannot_send_authenticated_token_requests():
     result = run_bootstrap({"origin": "https://example.invalid"})
     assert result["result"] == {"failure": "other-origin"}
     assert result["calls"] == []
+
+
+def test_wrapped_401_is_not_used_as_a_token_or_called_maintenance():
+    result = run_bootstrap(
+        {"status": 400, "body": {"statusCode": 401, "data": "SYNTHETIC_PRIVATE"}}
+    )
+    assert result["result"] == {"failure": "authentication"}
+    assert "SYNTHETIC_PRIVATE" not in json.dumps(result)
+
+
+def test_failed_application_status_inside_http_success_is_not_a_token():
+    result = run_bootstrap(
+        {"status": 200, "body": {"statusCode": 401, "data": "SYNTHETIC_PRIVATE"}}
+    )
+    assert result["result"] == {"failure": "authentication"}
+
+
+def test_400_without_authentication_envelope_is_not_called_maintenance():
+    result = run_bootstrap(
+        {"status": 400, "body": {"statusCode": 400, "data": "SYNTHETIC_PRIVATE"}}
+    )
+    assert result["result"] == {"failure": "http-error"}

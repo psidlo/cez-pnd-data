@@ -19,9 +19,9 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
-
 from addon.src.orchestrator import (
     ASSEMBLY_CONFIGS,
     CEZ_FETCH_ERROR,
@@ -1155,7 +1155,7 @@ _HDO_RAW_RESPONSE: dict[str, Any] = {
         {
             "signal": "EVV2",
             "den": "Pondělí",
-            "datum": "16.02.2026",
+            "datum": datetime.now(ZoneInfo("Europe/Prague")).strftime("%d.%m.%Y"),
             "casy": "00:00-08:00;   09:00-12:00;   13:00-15:00;   16:00-19:00;   20:00-24:00",
         }
     ]

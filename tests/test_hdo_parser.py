@@ -10,9 +10,9 @@ Covers:
 from __future__ import annotations
 
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 import pytest
-
 from addon.src.hdo_parser import (
     HdoData,
     _find_next_switch,
@@ -257,12 +257,16 @@ class TestParseHdoSignals:
     def test_next_switch_calculated(self) -> None:
         now = datetime(2026, 2, 15, 10, 0)
         result = parse_hdo_signals(FAKE_HDO_DATA, now=now)
-        assert result.next_switch == datetime(2026, 2, 15, 12, 0)
+        assert result.next_switch == datetime(
+            2026, 2, 15, 12, 0, tzinfo=ZoneInfo("Europe/Prague")
+        )
 
     def test_next_switch_during_high_tariff(self) -> None:
         now = datetime(2026, 2, 15, 8, 30)
         result = parse_hdo_signals(FAKE_HDO_DATA, now=now)
-        assert result.next_switch == datetime(2026, 2, 15, 9, 0)
+        assert result.next_switch == datetime(
+            2026, 2, 15, 9, 0, tzinfo=ZoneInfo("Europe/Prague")
+        )
 
     def test_is_low_tariff_is_bool(self) -> None:
         now = datetime(2026, 2, 15, 10, 0)
@@ -310,3 +314,55 @@ class TestHdoDataImmutability:
         )
         with pytest.raises(AttributeError):
             data.is_low_tariff = False  # type: ignore[misc]
+
+
+def test_hdo_uses_prague_wall_time_for_an_utc_instant():
+    data = {"signals": [{"signal": "SYNTHETIC", "casy": "01:00-06:00; 18:00-21:00"}]}
+    result = parse_hdo_signals(
+        data, now=datetime(2026, 11, 17, 17, 30, tzinfo=ZoneInfo("UTC"))
+    )
+    assert result.is_low_tariff is True
+    assert result.next_switch.isoformat() == "2026-11-17T21:00:00+01:00"
+
+
+def test_hdo_next_switch_uses_summer_offset():
+    data = {"signals": [{"signal": "SYNTHETIC", "casy": "01:00-06:00; 18:00-21:00"}]}
+    result = parse_hdo_signals(data, now=datetime(2026, 7, 17, 17, 30))
+    assert result.next_switch.isoformat() == "2026-07-17T18:00:00+02:00"
+
+
+def test_weekly_response_selects_today_instead_of_the_first_day():
+    data = {
+        "signals": [
+            {"signal": "SYNTHETIC", "datum": "16.11.2026", "casy": "01:00-06:00"},
+            {"signal": "SYNTHETIC", "datum": "17.11.2026", "casy": "18:00-21:00"},
+        ]
+    }
+    result = parse_hdo_signals(data, now=datetime(2026, 11, 17, 18, 30))
+    assert result.is_low_tariff is True
+    assert result.today_schedule == [("18:00", "21:00")]
+    assert result.next_switch.isoformat() == "2026-11-17T21:00:00+01:00"
+
+
+def test_stale_dated_schedule_is_not_presented_as_today():
+    data = {
+        "signals": [
+            {"signal": "SYNTHETIC", "datum": "16.11.2026", "casy": "01:00-06:00"}
+        ]
+    }
+    with pytest.raises(ValueError, match="current Prague date"):
+        parse_hdo_signals(data, now=datetime(2026, 11, 17, 2))
+
+
+def test_date_selection_follows_prague_at_utc_date_boundary():
+    data = {
+        "signals": [
+            {"signal": "SYNTHETIC", "datum": "16.11.2026", "casy": "01:00-06:00"},
+            {"signal": "SYNTHETIC", "datum": "17.11.2026", "casy": "00:00-06:00"},
+        ]
+    }
+    result = parse_hdo_signals(
+        data, now=datetime(2026, 11, 16, 23, 30, tzinfo=ZoneInfo("UTC"))
+    )
+    assert result.is_low_tariff is True
+    assert result.next_switch.isoformat() == "2026-11-17T06:00:00+01:00"

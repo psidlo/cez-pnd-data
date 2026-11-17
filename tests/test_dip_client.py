@@ -5,8 +5,6 @@ import json
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-
 from addon.src.dip_client import (
     DipClient,
     DipFetchError,
@@ -14,6 +12,7 @@ from addon.src.dip_client import (
     DipTokenError,
     _safe_token_diagnostics,
 )
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 
 def _mock_page(
@@ -293,20 +292,24 @@ async def test_fetch_hdo_navigates_to_dip_portal():
 
     await DipClient().fetch_hdo(context, ean="123")
 
-    page.goto.assert_called_once()
+    assert page.goto.await_count == 2
+    assert (
+        page.goto.call_args_list[0].args[0] == "https://dip.cezdistribuce.cz/irj/portal"
+    )
     call_args = page.goto.call_args
     assert "dip.cezdistribuce.cz/irj/portal/prehled-om" in call_args[0][0]
     page.close.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_fetch_hdo_bootstraps_token_without_waiting_for_angular():
+async def test_fetch_hdo_initializes_dashboard_before_explicit_token_bootstrap():
     page = _mock_page()
     context = _mock_context(page)
 
     await DipClient().fetch_hdo(context, ean="123")
 
-    page.wait_for_function.assert_not_called()
+    page.wait_for_function.assert_awaited_once()
+    assert page.wait_for_function.call_args.kwargs["timeout"] == 5000
     assert "/rest-auth-api?path=/token/get" in page.evaluate.call_args_list[0].args[0]
     page.close.assert_called_once()
 

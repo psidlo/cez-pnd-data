@@ -12,13 +12,13 @@ Uses the retained sample payload from evidence/ for deterministic assertions.
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
-
 from addon.src.auth import AuthSession, PlaywrightAuthClient
 from addon.src.mqtt_publisher import (
     AVAILABILITY_TOPIC_TEMPLATE,
@@ -421,7 +421,7 @@ _HDO_RAW_RESPONSE: dict[str, Any] = {
         {
             "signal": "EVV2",
             "den": "Sobota",
-            "datum": "14.02.2026",
+            "datum": datetime.now(ZoneInfo("Europe/Prague")).strftime("%d.%m.%Y"),
             "casy": "00:00-08:00;   09:00-12:00;   13:00-15:00;   16:00-19:00;   20:00-24:00",
         }
     ]
