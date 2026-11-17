@@ -617,6 +617,23 @@ def log_startup_summary(config: Dict[str, Dict[str, Any]]) -> None:
     logger.info("MQTT broker configuration loaded")
 
 
+async def _run_until_shutdown(operation: Any, shutdown_event: asyncio.Event) -> None:
+    """Cancel the poll loop on SIGTERM so the existing cleanup can run."""
+    worker = asyncio.create_task(operation)
+    stopping = asyncio.create_task(shutdown_event.wait())
+    try:
+        done, _ = await asyncio.wait(
+            {worker, stopping}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if worker in done:
+            await worker
+    finally:
+        for task in (worker, stopping):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(worker, stopping, return_exceptions=True)
+
+
 async def main():
     """Main application entry point."""
     # Read configuration. Disabled by default; no archive is opened when off.
@@ -712,7 +729,7 @@ async def main():
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        _ = await run_orchestrator_with_session()
+        await _run_until_shutdown(run_orchestrator_with_session(), shutdown_event)
     except asyncio.CancelledError:
         logger.info("Orchestrator cancelled")
     except KeyboardInterrupt:
