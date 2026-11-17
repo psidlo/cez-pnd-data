@@ -32,10 +32,10 @@ try:
     else:
         print(str(value))
 except json.JSONDecodeError as e:
-    sys.stderr.write(f"Warning: Failed to parse JSON in options file '{path}': {e}\n")
+    sys.stderr.write("Warning: Invalid add-on options JSON (details suppressed)\n")
     print(default)
 except Exception as e:
-    sys.stderr.write(f"Warning: Error reading options file '{path}': {e}\n")
+    sys.stderr.write("Warning: Add-on options read error (details suppressed)\n")
     print(default)
 PY
     else
@@ -48,11 +48,23 @@ export CEZ_PASSWORD="$(read_option password "")"
 export CEZ_ELECTROMETER_ID="$(read_option electrometer_id "")"
 export CEZ_EAN="$(read_option ean "")"
 export CEZ_ELECTROMETERS="$(read_option electrometers "[]")"
+export CEZ_ARCHIVE_ENABLED="$(read_option archive_enabled "false")"
+export CEZ_ARCHIVE_START_DATE="$(read_option archive_start_date "")"
+export CEZ_ARCHIVE_MAX_DAYS="$(read_option archive_days_per_cycle "1")"
+export CEZ_ARCHIVE_METER_IDS="$(read_option archive_meter_ids "[]")"
+export CEZ_IMPORT_EAN="$(read_option import_ean "")"
+export CEZ_EXPORT_EAN="$(read_option export_ean "")"
 
-export MQTT_HOST="${MQTT_HOST:-core-mosquitto}"
-export MQTT_PORT="${MQTT_PORT:-1883}"
-export MQTT_USER="${MQTT_USER:-}"
-export MQTT_PASSWORD="${MQTT_PASSWORD:-}"
+# Legacy local external-MQTT configuration takes precedence when populated.
+# Do not echo broker addresses, usernames or credentials to diagnostics.
+configured_mqtt_host="$(read_option mqtt_host "")"
+configured_mqtt_port="$(read_option mqtt_port "")"
+configured_mqtt_user="$(read_option mqtt_user "")"
+configured_mqtt_password="$(read_option mqtt_password "")"
+export MQTT_HOST="${configured_mqtt_host:-${MQTT_HOST:-core-mosquitto}}"
+export MQTT_PORT="${configured_mqtt_port:-${MQTT_PORT:-1883}}"
+export MQTT_USER="${configured_mqtt_user:-${MQTT_USER:-}}"
+export MQTT_PASSWORD="${configured_mqtt_password:-${MQTT_PASSWORD:-}}"
 
 if [[ -z "${CEZ_EMAIL}" || -z "${CEZ_PASSWORD}" ]]; then
     echo "Error: Missing required add-on options 'email' or 'password'." >&2
@@ -65,7 +77,7 @@ wait_for_mqtt() {
     local attempt=1
     local sleep_seconds=2
 
-    echo "Waiting for MQTT broker at ${MQTT_HOST}:${MQTT_PORT}..."
+    echo "Waiting for configured MQTT broker..."
     while (( attempt <= max_attempts )); do
         if python3 - "$MQTT_HOST" "$MQTT_PORT" <<'PY'
 import socket
@@ -91,13 +103,13 @@ PY
         sleep "${sleep_seconds}"
     done
 
-    echo "Error: MQTT broker at ${MQTT_HOST}:${MQTT_PORT} did not become available in time." >&2
+    echo "Error: Configured MQTT broker did not become available in time." >&2
     return 1
 }
 
 echo "Starting CEZ PND add-on..."
 echo "Configuration loaded. Sensitive details are not printed to logs."
-echo "MQTT configuration is read from Supervisor-provided environment (mqtt:need)."
+echo "MQTT configuration loaded (source details suppressed)."
 
 wait_for_mqtt
 

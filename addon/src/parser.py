@@ -296,9 +296,25 @@ class CezDataParser:
 
         Returns None if no readings are available.
         """
-        latest = self.get_latest_reading()
-        if latest is None:
+        # Preserve the local add-on's last-known MQTT value independently
+        # for each metric when CEZ ends the day with a null-valued row.
+        # Archive records retain the original missing samples unchanged.
+        records = self.parse_records()
+        if not records:
             return None
+        last_values = {}
+        for field_name in ParsedReading.__dataclass_fields__:
+            if field_name == "timestamp":
+                continue
+            last_values[field_name] = next(
+                (
+                    getattr(row, field_name)
+                    for row in reversed(records)
+                    if getattr(row, field_name) is not None
+                ),
+                None,
+            )
+        latest = ParsedReading(timestamp=records[-1].timestamp, **last_values)
         return {
             "timestamp": latest.timestamp.isoformat(),
             "consumption_kw": latest.consumption_kw,

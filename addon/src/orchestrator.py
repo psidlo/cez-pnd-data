@@ -108,19 +108,21 @@ class Orchestrator:
         fetcher: FetcherType,
         mqtt_publisher: Any,
         hdo_fetcher: HdoFetcherCallable | None = None,
+        archive_hook: Callable[[list[dict], list[dict]], Awaitable[None]] | None = None,
     ) -> None:
         self._config = config
         self._auth = auth_client
         self._fetcher: FetcherType = fetcher
         self._hdo_fetcher = hdo_fetcher
         self._mqtt = mqtt_publisher
+        self._archive_hook = archive_hook
 
     async def run_loop(self) -> None:
         """Starts polling loop. Runs until cancelled."""
         logger.info(
-            "Orchestrator starting — poll interval: %ds, meter: %s",
+            "Orchestrator starting — poll interval: %ds, meter count: %d",
             self._config.poll_interval_seconds,
-            self._config.meter_id,
+            len(self._config.electrometers),
         )
 
         self._mqtt.start()
@@ -128,7 +130,12 @@ class Orchestrator:
 
         while True:
             await self.run_once()
-            await asyncio.sleep(self._config.poll_interval_seconds)
+            fetcher = getattr(self._fetcher, "__self__", None)
+            cooldown = getattr(fetcher, "cooldown_seconds_remaining", 0.0)
+            wait_seconds = max(self._config.poll_interval_seconds, cooldown)
+            if cooldown > self._config.poll_interval_seconds:
+                logger.warning("PND polling delayed by portal rejection cooldown")
+            await asyncio.sleep(wait_seconds)
 
     async def run_once(self) -> None:
         """Execute a single fetch-parse-publish cycle."""
@@ -137,16 +144,16 @@ class Orchestrator:
 
         try:
             session = await self._auth.ensure_session()
-        except ServiceMaintenanceError as e:
-            logger.warning("[%s] %s — skipping cycle", PORTAL_MAINTENANCE, e)
-            return
-        except Exception as e:
-            logger.error(
-                "[%s] Auth failure — cannot obtain session: %s — skipping cycle",
-                SESSION_EXPIRED,
-                e,
+        except ServiceMaintenanceError:
+            logger.warning(
+                "[%s] Portal maintenance — skipping cycle", PORTAL_MAINTENANCE
             )
-            logger.debug("Auth failure details:", exc_info=True)
+            return
+        except Exception:
+            logger.error(
+                "[%s] Auth failure (details suppressed) — skipping cycle",
+                SESSION_EXPIRED,
+            )
             return
 
         cookies = session.cookies
@@ -190,11 +197,10 @@ class Orchestrator:
                 logger.warning("Context dead, forcing reauth for HDO fetch")
                 try:
                     hdo_session = await self._auth.ensure_session()
-                except Exception as e:
+                except Exception:
                     logger.error(
-                        "[%s] Re-auth for HDO failed: %s — skipping HDO this cycle",
+                        "[%s] Re-auth for HDO failed — skipping HDO this cycle",
                         HDO_FETCH_ERROR,
-                        e,
                     )
                     hdo_session = None
 
@@ -209,32 +215,36 @@ class Orchestrator:
                         hdo_raw = await self._hdo_fetcher(context, ean)
                         hdo_data = parse_hdo_signals(hdo_raw)
                         self._mqtt.publish_hdo_state(hdo_data, electrometer_id=meter_id)
-                    except DipMaintenanceError as e:
+                    except DipMaintenanceError:
                         logger.warning(
-                            "[%s] %s for meter %s — skipping HDO this cycle",
+                            "[%s] HDO portal maintenance — skipping HDO this cycle",
                             DIP_MAINTENANCE,
-                            e,
-                            meter_id,
                         )
-                    except DipTokenError as e:
+                    except DipTokenError:
                         logger.error(
-                            "[%s] Token acquisition failed for meter %s: %s — PND unaffected",
+                            "[%s] Token acquisition failed — PND unaffected",
                             HDO_TOKEN_ERROR,
-                            meter_id,
-                            e,
                         )
-                    except Exception as e:
+                    except Exception:
                         logger.error(
-                            "[%s] HDO fetch/parse/publish failed for meter %s: %s — PND unaffected",
+                            "[%s] HDO fetch/parse/publish failed — PND unaffected",
                             HDO_FETCH_ERROR,
-                            meter_id,
-                            e,
                         )
             else:
                 logger.warning(
                     "[%s] No live browser context available for HDO — skipping HDO this cycle",
                     HDO_FETCH_ERROR,
                 )
+
+        if self._archive_hook is not None:
+            try:
+                await self._archive_hook(cookies, self._config.electrometers)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Database/network exception messages can contain private data.
+                # The normal PND + MQTT cycle remains independently functional.
+                logger.error("Optional PND archive cycle failed (details suppressed)")
 
         cycle_duration = (datetime.now() - cycle_start).total_seconds()
         logger.info(
@@ -304,12 +314,10 @@ class Orchestrator:
         if fetcher_obj is not None and hasattr(fetcher_obj, "fetch_all"):
             try:
                 return await fetcher_obj.fetch_all(cookies, meter_id, ASSEMBLY_CONFIGS)
-            except Exception as e:
+            except Exception:
                 logger.error(
-                    "[%s] Batch fetch_all failed for meter %s: %s",
+                    "[%s] Batch fetch_all failed (details suppressed)",
                     FETCH_ERROR,
-                    meter_id,
-                    e,
                 )
                 return {}
 
@@ -331,18 +339,15 @@ class Orchestrator:
                     results[config["name"]] = payload
                 else:
                     logger.warning(
-                        "[%s] Assembly %s fetch failed or has no data for meter %s",
+                        "[%s] Assembly %s fetch failed or has no data",
                         FETCH_ERROR,
                         config["name"],
-                        meter_id,
                     )
-            except Exception as e:
+            except Exception:
                 logger.error(
-                    "[%s] Assembly %s failed for meter %s: %s — continuing with others",
+                    "[%s] Assembly %s failed — continuing with others",
                     FETCH_ERROR,
                     config["name"],
-                    meter_id,
-                    e,
                 )
         return results
 
@@ -353,8 +358,6 @@ class Orchestrator:
         _reauthed: bool = False,
     ) -> dict[str, Any] | None:
         """Fetch CEZ data with bounded retry and session-expiry re-auth."""
-        last_error: Exception | None = None
-
         for attempt in range(1, self._config.max_retries + 1):
             try:
                 payload = await self._fetcher(cookies)
@@ -384,24 +387,21 @@ class Orchestrator:
 
                 return await self._fetch_with_retry(cookies, _reauthed=True)
 
-            except Exception as exc:
-                last_error = exc
+            except Exception:
                 if attempt < self._config.max_retries:
                     delay = self._config.retry_base_delay_seconds * (2 ** (attempt - 1))
                     logger.warning(
-                        "[%s] CEZ fetch failed (attempt %d/%d): %s — retrying in %.1fs",
+                        "[%s] CEZ fetch failed (attempt %d/%d) — retrying in %.1fs",
                         CEZ_FETCH_ERROR,
                         attempt,
                         self._config.max_retries,
-                        exc,
                         delay,
                     )
                     await asyncio.sleep(delay)
 
         logger.error(
-            "[%s] CEZ fetch failed after %d attempts: %s — aborting cycle",
+            "[%s] CEZ fetch failed after %d attempts — aborting cycle",
             CEZ_FETCH_ERROR,
             self._config.max_retries,
-            last_error,
         )
         return None

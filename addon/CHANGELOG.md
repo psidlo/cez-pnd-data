@@ -1,5 +1,45 @@
 # Changelog
 
+## Unreleased
+
+- Document current configuration, MQTT identities and availability, HDO timing, archive setup, data quality, backup and upgrade procedures as user guides.
+- Add in-app documentation and correct unsupported claims about automatic meter discovery, supply-point aggregation and HDO entity domains.
+
+## 0.4.9 — 2026-11-17
+
+Consolidated fork release preparation, corresponding to the validated local
+0.4.9 deployment. Versions 0.4.2–0.4.8 were local revisions; no separate public
+release history is reconstructed for them.
+
+### Fixed
+
+- Keep MQTT connected with Paho's network loop, wait for CONNACK, restore retained discovery and availability after reconnect, and drain pending messages on shutdown.
+- Initialize DIP dashboard authorization before opening HDO details; bootstrap and validate the request token without exposing tokens or private responses.
+- Distinguish wrapped authorization failures from portal maintenance. Select the current Europe/Prague schedule and include a UTC offset in the next-switch timestamp.
+- Preserve existing MQTT sensor domains, topics, unique IDs and last-known display values across null response rows. Remove invalid discovery classes without guessing a conversion for legacy Rv.
+- Retain ordinary current-day PND queries with a daily-register fallback to yesterday and local polling compatibility. Reject unsafe/unknown archive view migrations and conflicting import/export metadata.
+- Cancel polling and wake the idle asyncio selector on SIGTERM so MQTT, browser and archive cleanup completes.
+- Suppress credentials, private response bodies and identifying configuration values in diagnostics.
+
+### Added
+
+- Opt-in SQLite history and bounded historical backfill, using explicit Prague calendar days and the final midnight endpoint.
+- Independent published/archive meter selections, separate import/export EAN metadata and external MQTT broker options.
+- Preserve raw measurements, qualities, missing intervals and existing valid rows when a refreshed profile is incomplete. Never fill archive gaps with zero.
+- Bounded request-rejection handling and process-local cooldown.
+- Consolidated offline CI on Python 3.9–3.13, coverage, lint/types, secrets/SAST, dependency checks, container checks and SBOM.
+
+### Validation and compatibility
+
+- Runtime commit `9f2487d79ce30ae47899702bb6ccf753c3ef62e5`: 486 tests, 87.77% coverage; all jobs passed in [CI #44041527135](https://github.com/psidlo/cez-pnd-data/actions/runs/44041527135).
+- Local 0.4.9 deployment verified source hashes, backup/migration on a copy, database integrity and preservation, HDO, stable MQTT beyond three keepalive periods, app restart and a real archive cycle.
+- Public manifest retains slug `cez-pnd`; an existing `cez-pnd-external` installation needs the documented local overlay to preserve its identity and private options.
+- Archive remains disabled by default. Start with a small global backfill budget.
+- Cooldown resets on restart; LWT covers the first published meter; daily registers can remain unknown; legacy Rv interpretation remains unverified. A shared-broker outage was not forced in production.
+- Security audit jobs retain their inherited advisory status; successful CI does not establish vulnerability-free dependencies.
+
+See [release notes](../docs/releases/0.4.9.md), [migration/rollback](../docs/pnd-consolidated-migration.md) and [acceptance checks](../docs/pnd-open-items.md).
+
 ## 0.4.1
 
 - **Fix HDO session lifecycle bug** — `ensure_session()` now triggers re-login when session cookies are valid but no live browser context exists (fresh process start). Previously returned cookies-only session, causing HDO to silently fail with `[HDO_FETCH_ERROR] No live browser context available for HDO`.

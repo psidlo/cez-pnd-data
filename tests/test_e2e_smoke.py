@@ -12,10 +12,11 @@ Uses the retained sample payload from evidence/ for deterministic assertions.
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -421,7 +422,7 @@ _HDO_RAW_RESPONSE: dict[str, Any] = {
         {
             "signal": "EVV2",
             "den": "Sobota",
-            "datum": "14.02.2026",
+            "datum": datetime.now(ZoneInfo("Europe/Prague")).strftime("%d.%m.%Y"),
             "casy": "00:00-08:00;   09:00-12:00;   13:00-15:00;   16:00-19:00;   20:00-24:00",
         }
     ]
@@ -542,7 +543,10 @@ class TestFull17SensorPipeline:
             mock_browser.is_connected.return_value = True
             store.set_live_context(mock_context, mock_browser)
             return AuthSession(
-                cookies=fake_cookies, reused=False, context=mock_context, browser=mock_browser
+                cookies=fake_cookies,
+                reused=False,
+                context=mock_context,
+                browser=mock_browser,
             )
 
         auth_client = PlaywrightAuthClient(creds, store, login_runner=fake_login)
@@ -609,7 +613,10 @@ class TestFull17SensorPipeline:
             mock_browser.is_connected.return_value = True
             store.set_live_context(mock_context, mock_browser)
             return AuthSession(
-                cookies=fake_cookies, reused=False, context=mock_context, browser=mock_browser
+                cookies=fake_cookies,
+                reused=False,
+                context=mock_context,
+                browser=mock_browser,
             )
 
         auth_client = PlaywrightAuthClient(creds, store, login_runner=fake_login)

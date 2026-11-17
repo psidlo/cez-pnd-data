@@ -23,8 +23,10 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
+PRAGUE = ZoneInfo("Europe/Prague")
 
 
 @dataclass(frozen=True)
@@ -49,7 +51,7 @@ def _parse_time_ranges(casy: str) -> list[tuple[str, str]]:
         if not part:
             continue
         if "-" not in part:
-            logger.warning("Skipping malformed time range: %s", part)
+            logger.warning("Skipping malformed HDO time range (details suppressed)")
             continue
         start, end = part.split("-", 1)
         ranges.append((start.strip(), end.strip()))
@@ -103,14 +105,16 @@ def _find_next_switch(now: datetime, ranges: list[tuple[str, str]]) -> datetime:
     # Find the next boundary after now
     for b in boundaries:
         if b > now_time:
-            return datetime.combine(today, b)
+            return datetime.combine(today, b, tzinfo=now.tzinfo)
 
     # No more boundaries today → first boundary tomorrow
     if boundaries:
-        return datetime.combine(today + timedelta(days=1), boundaries[0])
+        return datetime.combine(
+            today + timedelta(days=1), boundaries[0], tzinfo=now.tzinfo
+        )
 
     # No boundaries at all (shouldn't happen with valid data)
-    return datetime.combine(today + timedelta(days=1), time(0, 0))
+    return datetime.combine(today + timedelta(days=1), time(0, 0), tzinfo=now.tzinfo)
 
 
 def parse_hdo_signals(
@@ -123,7 +127,7 @@ def parse_hdo_signals(
     Args:
         signals_data: The "data" portion of DIP API response, containing
             {"signals": [{"signal": ..., "casy": ..., ...}]}
-        now: Override current time for testing. Defaults to datetime.now().
+        now: Override current time for testing. Defaults to the current Europe/Prague time.
 
     Returns:
         HdoData with parsed tariff information.
@@ -132,14 +136,32 @@ def parse_hdo_signals(
         ValueError: If signals_data is missing required fields.
     """
     if now is None:
-        now = datetime.now()
+        now = datetime.now(PRAGUE)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=PRAGUE)
+    else:
+        now = now.astimezone(PRAGUE)
 
     signals = signals_data.get("signals")
     if not signals:
         raise ValueError("No signals found in data")
 
-    # Use first signal entry
-    signal = signals[0]
+    # Dated weekly responses must use today's Prague-local schedule.
+    dated = [entry for entry in signals if entry.get("datum")]
+    if dated:
+        matching = []
+        for entry in dated:
+            try:
+                day = datetime.strptime(entry["datum"], "%d.%m.%Y").date()
+            except (TypeError, ValueError):
+                continue
+            if day == now.date():
+                matching.append(entry)
+        if not matching:
+            raise ValueError("No HDO schedule for the current Prague date")
+        signal = matching[0]
+    else:
+        signal = signals[0]  # Preserve legacy undated-response behavior.
 
     signal_name = signal.get("signal", "")
     casy = signal.get("casy", "")

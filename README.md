@@ -1,453 +1,270 @@
-# CEZ PND – Home Assistant Add-on
+# CEZ PND pro Home Assistant
 
-Integrace elektroměrových dat z [CEZ Distribuce PND](https://pnd.cezdistribuce.cz) do Home Assistant pomocí MQTT Discovery.
+Aplikace načítá elektroměrová data z [ČEZ PND](https://pnd.cezdistribuce.cz)
+a rozvrh HDO z [Distribučního portálu ČEZ](https://dip.cezdistribuce.cz).
+Přes MQTT Discovery vytváří senzory v Home Assistantu. Volitelně ukládá
+historické odpovědi a čtvrthodinové profily do SQLite.
 
-## Co to dělá
+## Funkce a význam dat
 
-Add-on se přihlásí k portálu CEZ PND pomocí Playwright (Chromium), stáhne aktuální čtvrthodinová data z elektroměru a publikuje je jako HA senzory přes MQTT. Senzory se v Home Assistantu vytvoří automaticky – žádná ruční konfigurace entit.
+- Samostatné MQTT zařízení pro každý nastavený elektroměr: 13 PND a 4 HDO senzorů.
+- Připojení k místnímu nebo externímu MQTT brokeru, obnovení discovery
+  a dostupnosti po opětovném připojení a korektní ukončení aplikace.
+- Přihlášení přes Playwright/Chromium, obnova relace a inicializace
+  autorizace DIP pro HDO ve stejném přihlášeném kontextu.
+- HDO rozvrh pro aktuální datum v Europe/Prague a čas dalšího přepnutí
+  s údajem o časovém pásmu.
+- Volitelný archiv se samostatným výběrem elektroměrů, omezeným zpětným
+  doplňováním a zachováním chybějících hodnot a kvality měření.
 
-**Senzory:**
+PND jsou data zveřejněná distribučním portálem se zpožděním. Aplikace
+nenahrazuje průběžné místní měření. MQTT zobrazuje poslední dostupné
+hodnoty jednotlivých veličin z načtených odpovědí; nemusí pocházet ze stejného
+okamžiku. Dostupnost MQTT potvrzuje spojení, nikoli čerstvost každé hodnoty.
 
-Tento add-on poskytuje **17 senzorů** (13 PND + 4 HDO). Všechny se automaticky vytváří přes MQTT Discovery.
-
-### PND Senzory (13 ks)
-
-| Senzor | Popis | Jednotka | Zdroj (PND tabulka) |
-|--------|-------|----------|---------------------|
-| CEZ Consumption Power | Odběr (+A) | kW | Tab 00 |
-| CEZ Production Power | Dodávka (-A) | kW | Tab 00 |
-| CEZ Reactive Power | Jalový výkon (Rv) | kW | Tab 00 |
-| CEZ Reactive Import Ri+ | Import induktivní reaktivní (+ind) | var | Tab 03 |
-| CEZ Reactive Export Rc- | Export kapacitivní reaktivní (-cap) | var | Tab 03 |
-| CEZ Reactive Export Ri- | Export induktivní reaktivní (-ind) | var | Tab 04 |
-| CEZ Reactive Import Rc+ | Import kapacitivní reaktivní (+cap) | var | Tab 04 |
-| CEZ Daily Consumption | Denní odběr energie | kWh | Tab 07 |
-| CEZ Daily Production | Denní dodávka energie | kWh | Tab 07 |
-| CEZ Register Consumption (+E) | Kumulativní odběr | kWh | Tab 08 |
-| CEZ Register Production (-E) | Kumulativní dodávka | kWh | Tab 08 |
-| CEZ Register Low Tariff (NT) | Kumulativní odběr nízkého tarifu | kWh | Tab 17 |
-| CEZ Register High Tariff (VT) | Kumulativní odběr vysokého tarifu | kWh | Tab 17 |
-
-### HDO Senzory (4 ks)
-
-| Senzor | Typ | Popis |
-|--------|-----|-------|
-| CEZ HDO Low Tariff Active | binary_sensor | Je právě nízký tarif aktivní? (ON/OFF) |
-| CEZ HDO Next Switch | sensor | Kdy dojde další přepnutí tarifu (timestamp) |
-| CEZ HDO Schedule Today | sensor | Dnešní NT časová okna (např. `00:00-08:00; 09:00-12:00; 13:00-15:00; 16:00-19:00; 20:00-24:00`) |
-| CEZ HDO Signal | sensor | Název HDO signálu (např. `EVV2`) |
-
-## Požadavky
-
-1. **MQTT broker** – nainstalovaný a běžící v Home Assistantu
-   - Doporučeno: [Mosquitto broker](https://github.com/home-assistant/addons/tree/master/mosquitto) add-on
-2. **CEZ PND účet** – přihlašovací údaje k portálu CEZ Distribuce
+Historická data, pokrytí a časové přiřazení jsou popsány v
+[návodu k archivu](docs/archive.md).
 
 ## Instalace
 
-### 1. Nainstalujte MQTT broker
+Potřebujete Home Assistant OS nebo Supervised, přístup k účtu ČEZ
+a MQTT broker přístupný aplikaci i MQTT integraci Home Assistantu.
+Obraz podporuje amd64, aarch64 a armv7.
 
-Pokud ještě nemáte MQTT broker:
+1. Připravte broker, například Mosquitto, a nastavte integraci MQTT
+   v **Nastavení → Zařízení a služby**.
+2. V **Nastavení → Aplikace → Obchod s aplikacemi** přidejte URL repozitáře,
+   ze kterého instalujete aplikaci. Ve starších verzích HA se tato nabídka
+   nazývá Doplňky.
+3. Nainstalujte CEZ PND, vyplňte přihlašovací údaje ČEZ, elektroměr
+   a připojení MQTT a aplikaci spusťte.
+4. V logu zkontrolujte dokončení cyklu a v integraci MQTT vytvořené zařízení.
+   Některé veličiny mohou zůstat neznámé, pokud je portál neposkytuje.
 
-1. V Home Assistantu přejděte na **Nastavení → Doplňky → Obchod s doplňky**
-2. Najděte a nainstalujte **Mosquitto broker**
-3. Spusťte broker a přidejte MQTT integraci (**Nastavení → Zařízení a služby → Přidat integraci → MQTT**)
+Obchod HA čte výchozí větev repozitáře. Dokumentace v jiné větvi popisuje
+zdroje této větve; samotné přidání repozitáře nevybere její obsah.
+Pro testování konkrétní větve nebo commitu zkopírujte její adresář
+`addon/` jako místní aplikaci do `/addons/cez-pnd/`, obnovte seznam
+místních aplikací a sestavte obraz. Pro aktualizaci existující instalace
+nejprve použijte [postup aktualizace a návratu](docs/pnd-consolidated-migration.md).
 
-### 2. Nainstalujte CEZ PND add-on
+## Nastavení
 
-1. Přidejte tento repozitář jako add-on repozitář:
-   ```
-   https://github.com/Muriel2Horak/cez-pnd-data
-   ```
-2. Najděte **CEZ PND** v obchodě s doplňky a nainstalujte
-3. Přejděte do konfigurace add-onu
+Hodnoty ID a EAN zadávejte jako řetězce. **ID elektroměru a EAN jsou různé
+identifikátory**; použijte údaje příslušného elektroměru a odběrného místa
+z portálu ČEZ.
 
-### 3. Nastavte přihlašovací údaje
+### Účet a publikované elektroměry
 
-V konfiguraci add-onu vyplňte:
+| Volba | Výchozí hodnota | Význam |
+|---|---|---|
+| `email` | prázdná | Povinný přihlašovací e-mail účtu ČEZ. |
+| `password` | prázdná | Povinné heslo účtu ČEZ. |
+| `electrometer_id` | prázdná | ID jednoho elektroměru; použije se, když je `electrometers` prázdné. Pro běžný provoz ID výslovně zadejte. |
+| `ean` | prázdná | EAN odběrného místa pro jeden elektroměr, potřebný k načtení HDO. |
+| `electrometers` | `"[]"` | JSON pole objektů s neprázdnými řetězci `electrometer_id` a `ean`. Neprázdný seznam má přednost před oběma samostatnými volbami. |
 
-| Pole | Povinné | Popis |
-|------|---------|-------|
-| `email` | Ano | Přihlašovací e-mail k CEZ PND |
-| `password` | Ano | Heslo k CEZ PND |
-| `electrometer_id` | Ne | ID elektroměru (auto-detekce z dat, ruční zadání jako fallback) |
-| `electrometers` | Ne | JSON pole s více elektroměry (viz níže) |
-
-## Konfigurace více elektroměrů
-
-Pro sledování více elektroměrů/odběrných míst použijte novou konfiguraci `electrometers`:
+Minimální příklad pro jeden elektroměr (všechny údaje jsou zástupné):
 
 ```yaml
-electrometers: '[{"electrometer_id": "784703", "ean": "85912345678901"}, {"electrometer_id": "784704", "ean": "85912345678902"}]'
+email: "vas-ucet@example.invalid"
+password: "DOPLNTE_HESLO"
+electrometer_id: "12345678"
+ean: "859000000000000001"
+electrometers: "[]"
+mqtt_host: "core-mosquitto"
+mqtt_port: 1883
+mqtt_user: "vas-mqtt-uzivatel"
+mqtt_password: "DOPLNTE_MQTT_HESLO"
+archive_enabled: false
 ```
 
-Každý elektroměr se vytvoří jako samostatné zařízení v Home Assistant.
+Prázdné `ean` v režimu jednoho elektroměru umožňuje PND, ale bez HDO.
+Nespoléhejte na automatické vyhledání elektroměru: aktuální runtime
+potřebuje nakonfigurovaný seznam nebo výslovné `electrometer_id`.
+Detekce ID z názvů sloupců parserem nevyhledává elektroměry v účtu.
 
-### Názvy senzorů
+Více publikovaných elektroměrů:
 
-Senzory používají bilingvní názvy ve formátu: `CEZ {id} {EN} / {CZ}`
-
-Příklady:
-- `CEZ 784703 Consumption Power / Odběr`
-- `CEZ 784703 HDO Low Tariff Active / HDO Nízký tarif aktivní`
-
-## Migrace na více elektroměrů
-
-> **⚠️ Clean Break Migration**
->
-> Při přechodu na konfiguraci `electrometers` se vytvoří nové entity s novými unique_id.
-> Staré entity zůstanou v Home Assistant, ale nebudou se aktualizovat.
-> Doporučujeme staré entity odstranit ručně v UI.
-
-### Backward Compatibility
-
-Stará konfigurace s `electrometer_id` a `ean` stále funguje pro jeden elektroměr:
 ```yaml
-electrometer_id: "784703"
-ean: "85912345678901"
+electrometers: '[{"electrometer_id":"12345678","ean":"859000000000000001"},{"electrometer_id":"87654321","ean":"859000000000000002"}]'
 ```
 
-## Architektura
+Seznam nesmí obsahovat duplicitní ID ani duplicitní EAN. Každý elektroměr
+má vlastní zařízení a témata; hodnoty se automaticky nesčítají do souhrnu
+odběrného místa. Pro původní a nástupnický elektroměr stejného místa
+použijte samostatný [výběr pro archiv](docs/archive.md).
+Při více publikovaných elektroměrech zohledněte omezení LWT níže.
 
-### Přehled systému
+### MQTT broker
 
-```
-┌─────────────────────┐     ┌──────────────────────────────────┐     ┌──────────────┐
-│   CEZ DIP portál    │     │         CEZ PND Add-on           │     │  MQTT Broker  │
-│ (dip.cezdistribuce) │     │                                  │     │ (Mosquitto)   │
-│                     │◀───▶│  Orchestrator (15min polling)    │────▶│               │
-│  Login (iframe)     │     │  ├── Auth (Playwright → cookies) │     └──────┬────────┘
-│  OAuth/SAML flow    │     │  ├── PndFetcher (WAF warmup +    │            │
-└─────────────────────┘     │  │   form POST → 6 assemblies)  │            ▼
-                            │  ├── DipClient (aiohttp → HDO)   │   ┌──────────────────┐
-┌─────────────────────┐     │  ├── CezDataParser (96 rec →     │   │  Home Assistant   │
-│   CEZ PND API       │     │  │   latest reading)             │   │  (MQTT Discovery) │
-│ (pnd.cezdistribuce) │◀───▶│  └── MqttPublisher (17 sensors  │   │  → 17 Senzorů     │
-│  /external/data     │     │      Discovery + state)          │   └──────────────────┘
-└─────────────────────┘     └──────────────────────────────────┘
-```
+| Volba | Výchozí hodnota | Význam |
+|---|---|---|
+| `mqtt_host` | prázdná | Adresa brokeru. Neprázdná hodnota má přednost před prostředím; jinak `MQTT_HOST`, případně `core-mosquitto`. |
+| `mqtt_port` | `1883` | Port brokeru. Neprázdná hodnota má přednost před `MQTT_PORT`. |
+| `mqtt_user` | prázdná | MQTT uživatel; jinak hodnota `MQTT_USER`, je-li v prostředí. |
+| `mqtt_password` | prázdná | MQTT heslo; jinak hodnota `MQTT_PASSWORD`, je-li v prostředí. |
 
-**Proč add-on + MQTT?**
+Použijte účet, kterému broker dovoluje publikovat discovery a stavová témata.
+Pro externí broker vyplňte jeho adresu, port a přihlašovací údaje přímo
+v konfiguraci. Home Assistant musí být připojen ke stejnému brokeru.
 
-- Playwright vyžaduje Chromium — příliš velký pro custom component
-- MQTT Discovery vytváří senzory automaticky bez konfigurace v HA
-- Add-on běží izolovaně v Dockeru s vlastními závislostmi
-- Viz [evidence/poc-comparison.md](evidence/poc-comparison.md) pro srovnání alternativ
+Manifest deklaruje `mqtt:want`; broker nemusí být místní aplikace.
+Startovací skript čeká na dostupnost nastaveného brokeru a runtime potvrdí
+přijetí připojení. Samotná deklarace služby nezajišťuje automatické získání
+přihlašovacích údajů ze Supervisor API. Je-li broker vyžaduje, vyplňte je.
+Konfigurace zde nenabízí volbu MQTT TLS.
 
-### Autentizační flow
+### Volitelný archiv
 
-1. **Playwright launch** — headless Chromium s českým locale a user-agentem
-2. **Navigace na PND** → přesměrování na DIP login portál (`dip.cezdistribuce.cz`)
-3. **Login v iframe** — detekce login formu v iframe/page, vyplnění email + heslo, submit
-4. **Čekání na redirect** — `cezpnd2/dashboard/` nebo `irj/portal` URL pattern = úspěch
-5. **Cookie extraction** — `context.cookies()` → uložení do `/data/session_state.json`
-6. **Session TTL** — 6 hodin (konfigurovatelné), expiry z cookie `expires` nebo TTL fallback
-7. **Auto-reauth** — při expiraci orchestrátor automaticky opakuje login
+| Volba | Výchozí hodnota | Význam |
+|---|---|---|
+| `archive_enabled` | `false` | Povolit archivaci. Při vypnutí runtime archivní databázi neotevírá; existující soubor nemaže. |
+| `archive_start_date` | prázdná | Při zapnutí povinné počáteční datum `YYYY-MM-DD`. |
+| `archive_days_per_cycle` | `1` | Společný limit pokusů o den elektroměru za cyklus, 1–62; není to počet API požadavků ani limit pro každý elektroměr zvlášť. |
+| `archive_meter_ids` | `"[]"` | JSON pole číselných ID jako řetězců, nejvýše 32 položek. Prázdný seznam použije publikované elektroměry. |
+| `import_ean` | prázdná | Výslovný EAN odběru pro samostatný seznam archivních elektroměrů. |
+| `export_ean` | prázdná | Výslovný EAN dodávky pro samostatný seznam archivních elektroměrů. |
 
-### Data flow (Playwright-only PND fetch)
+Pro nový archiv nastavte **neprázdné** `archive_meter_ids` a oba EAN.
+Jedna dvojice EAN se přiřazuje všem ID v tomto samostatném seznamu; je určena
+například pro výměnu elektroměru na jednom předávacím místě. Při prázdném
+seznamu runtime vyžaduje již existující archivní metadata; obecné `ean`
+nenahrazuje dvojici import/export. Další příklady, SQL a pravidla času jsou
+v [návodu k archivu](docs/archive.md).
 
-CEZ PND API vyžaduje specifický přístup kvůli WAF (Web Application Firewall):
-**PND data se fetchují POUZE přes Playwright (browser automation)** — HTTP/aiohttp cesta byla odstraněna.
+## Senzory a jednotky
 
-```
-1. WAF warmup request (JSON, očekávaný 400)
-   POST /cezpnd2/external/data (Playwright browser)
-   Content-Type: application/json
-   Body: {"format":"table","idAssembly":-1003,...}
-   → Status 400 (expected — sets WAF cookies/state)
+Následující klíče jsou použity v MQTT tématech a unique ID. Konkrétní
+`entity_id` přiděluje Home Assistant a uživatel je může přejmenovat.
+Názvy zařízení a senzorů obsahují ID elektroměru a český i anglický název.
 
-2. Pauza 1 sekunda
+| Klíč | Význam | Publikovaná jednotka |
+|---|---|---|
+| `consumption` | Odběr (+A) | kW |
+| `production` | Dodávka (−A) | kW |
+| `reactive` | Legacy sloupec Rv, beze změny číselné hodnoty | kW |
+| `reactive_import_inductive` | Ri+, import induktivní | var |
+| `reactive_export_capacitive` | Rc−, export kapacitivní | var |
+| `reactive_export_inductive` | Ri−, export induktivní | var |
+| `reactive_import_capacitive` | Rc+, import kapacitivní | var |
+| `daily_consumption` | Denní odběr | kWh |
+| `daily_production` | Denní dodávka | kWh |
+| `register_consumption` | Registr odběru (+E) | kWh |
+| `register_production` | Registr dodávky (−E) | kWh |
+| `register_low_tariff` | Registr nízkého tarifu | kWh |
+| `register_high_tariff` | Registr vysokého tarifu | kWh |
+| `hdo_low_tariff_active` | Vypočtený stav nízkého tarifu | `ON` / `OFF` |
+| `hdo_next_switch` | Vypočtený čas dalšího přepnutí | ISO 8601 s časovým pásmem |
+| `hdo_schedule_today` | Dnešní okna nízkého tarifu | text |
+| `hdo_signal` | Název signálu | text |
 
-3. Skutečný data request (form-encoded)
-   POST /cezpnd2/external/data (Playwright browser)
-   Content-Type: application/x-www-form-urlencoded   ← KRITICKÉ
-   Body: format=table&idAssembly=-1003&...
-   → Status 200 + JSON data
-```
+Všech 17 entit je v doméně **sensor**; stav HDO není `binary_sensor`.
+Definice se vytvářejí i pro hodnoty, které portál aktuálně neposkytuje.
+Ty mohou zůstat `unknown` nebo ponechat dřívější hodnotu.
 
-> **Proč jen Playwright?** CEZ PND API má context affinity — cookies a WAF state jsou
-> vázány na browser context. HTTP clienty (aiohttp) dostávají 302 OAuth redirect místo dat.
-> Pouze Playwright browser context (s cookies ze stejné session) může získat PND data.
+Tabulka popisuje publikovaná metadata, nikoli nezávislé ověření jednotek
+portálu. U Rv se zachovává kW a není nastavena třída `reactive_power`;
+jeho fyzikální význam zde není potvrzený. Čtyři Ri/Rc kanály jsou v této
+implementaci označeny `var` bez jednotkové konverze. Před použitím
+jalových veličin pro výpočty ověřte jednotku zdrojové sestavy ČEZ.
 
-### 6 Assembly konfigurací
+### HDO a čas
 
-Orchestrátor fetchuje 6 různých sestav dat v každém cyklu:
+Tarif je výpočet podle rozvrhu z DIP, nikoli čtení kontaktu HDO.
+U datovaného týdenního rozvrhu se vybírá první záznam pro dnešní datum
+v Europe/Prague; pokud pro dnešek není záznam, HDO se nepublikuje.
+U nedatované odpovědi se použije první signál. Různé kanály se neslučují.
 
-| Assembly ID | Název | Popis | Fallback |
-|-------------|-------|-------|----------|
-| -1003 | profile_all | Odběr, dodávka, jalový výkon (15min) | — |
-| -1012 | profile_consumption_reactive | Import/export reaktivní (+ind, -cap) | — |
-| -1011 | profile_production_reactive | Import/export reaktivní (-ind, +cap) | — |
-| -1021 | daily_consumption | Denní odběr energie | — |
-| -1022 | daily_production | Denní dodávka energie | — |
-| -1027 | daily_registers | Registrové stavy (NT, VT, +E, -E) | Yesterday ✓ |
+HDO hodnoty se přepočítávají při polling cyklu, nikoli přesně v okamžiku
+přepnutí tarifu. Po poslední dnešní hranici parser odhaduje další přepnutí
+z dnešních časů pro následující den; neověřuje tím zítřejší rozvrh.
+Nejde o náhradu fyzického blokování spotřebiče ani o záruku přesného přepnutí.
 
-Tab 17 (`daily_registers`) používá **yesterday fallback** — pokud pro dnešek nejsou data (`hasData=false`), zkouší se včerejší den.
+## MQTT témata a dostupnost
 
-### HDO (Hromadné dálkové ovládání)
+| Účel | Téma |
+|---|---|
+| Discovery | `homeassistant/sensor/cez_pnd_{meter_id}/{key}/config` |
+| Stav | `cez_pnd/{meter_id}/{key}/state` |
+| Dostupnost | `cez_pnd/{meter_id}/availability` |
+| Unique ID | `cez_pnd_{meter_id}_{key}` |
+| ID zařízení | `cez_pnd_{meter_id}` |
 
-HDO signály se fetchují přes **DIP API** (ne PND):
+Zprávy používají QoS 1 a retain. Po opětovném připojení se obnoví discovery
+a online stav. Při korektním ukončení se offline publikuje všem elektroměrům.
+**Při nečekaném přerušení spojení má LWT pouze první publikovaný elektroměr**;
+ostatní mohou mít ponechaný online stav. Online proto není kontrolou
+čerstvosti měření a pro více elektroměrů není poskytován společný atomický LWT.
 
-1. **Token request** → `GET /irj/portal/rest-auth-api?path=/token/get`
-2. **Signals request** → `GET /irj/portal/prehled-om?path=supply-point-detail/signals/{ean}` s `x-request-token` header
-3. **Parsing** → `parse_hdo_signals()` extrahuje aktuální tarif, další přepnutí, denní schedule
+Při převodu mezi konfigurací jednoho elektroměru a seznamem zůstávají
+identity stejné, pokud zůstane stejné ID elektroměru. Změna tohoto ID
+nebo instalace druhého publisheru může ovlivnit entity; před aktualizací
+zkontrolujte návazné dashboardy a automatizace.
 
-## MQTT topicy
+## Provoz a odstraňování problémů
 
-| Typ | Formát | Příklad |
-|-----|--------|---------|
-| Discovery config | `homeassistant/sensor/cez_pnd_{meter_id}/{key}/config` | `homeassistant/sensor/cez_pnd_784703/consumption/config` |
-| Stav senzoru | `cez_pnd/{meter_id}/{key}/state` | `cez_pnd/784703/consumption/state` |
-| Dostupnost | `cez_pnd/{meter_id}/availability` | `cez_pnd/784703/availability` |
+Po dokončení celého cyklu aplikace čeká 900 sekund. Cyklus zahrnuje načtení
+PND, HDO a případně archivaci. Nejde o dotazy zarovnané na čtvrthodiny;
+větší archivní dávka další cyklus oddálí.
 
-## Odstraňování problémů
+Běžné dotazy této větve používají aktuální kalendářní den; chybějící denní
+registry se zkoušejí ještě za včerejšek. Archiv samostatně zpracovává
+ukončené dny do včerejška. Dostupnost dat závisí na jejich zveřejnění ČEZ.
 
-### Diagnostická matice
+| Projev | Co zkontrolovat |
+|---|---|
+| Start skončí na konfiguraci | Účet, výslovné ID elektroměru, JSON seznamy, platné datum a limit archivu. |
+| MQTT se nepřipojí | Dostupnost hostu/portu z aplikace, účet a oprávnění brokeru, připojení HA ke stejnému brokeru. |
+| Senzory nejsou vidět | Integraci MQTT a témata `homeassistant/sensor/cez_pnd_{meter_id}/+/config`; mohou mít uživatelsky změněná entity ID. |
+| Některé hodnoty chybí | Odpovídající sestavu a datum na portálu. Chybějící registry nejsou automaticky nula. |
+| `SESSION_EXPIRED` | Relace nebo přihlášení selhalo; aplikace zkouší obnovu podle typu chyby. Ověřte přihlášení na portálu. |
+| `PORTAL_MAINTENANCE` | Přihlášení označilo údržbu; celý cyklus se vynechá. |
+| `HDO_TOKEN_ERROR`, `HDO_FETCH_ERROR` nebo `DIP_MAINTENANCE` | Přístup k DIP, EAN a dostupnost rozvrhu. PND může pokračovat. HTTP 400 s aplikačním 401 při získávání tokenu znamená problém autorizace, nikoli důkaz údržby. |
+| Odmítnutí PND / `PND request rejected` | Aplikace odloží PND dotazy na 12 hodin. Vyčkejte; opakované restarty ruší tuto ochrannou pauzu. |
+| Archiv nic nedoplňuje | Povolení, datum, archivní ID, metadata EAN, prodlevy opakování a integritu databáze; viz [archiv](docs/archive.md). |
 
-| Symptom | Příčina | Log marker | Řešení |
-|---------|---------|------------|--------|
-| `302 Redirect` místo dat | Expirované cookies / chybí browser context | `SESSION_EXPIRED` | Auto-reauth, případně restart |
-| `400 Bad Request` z PND API | Chybný Content-Type (JSON místo form) | — | Interní chyba — viz WAF warmup flow |
-| HTML místo JSON odpovědi | WAF warmup selhal | — | Restart → warmup se opakuje |
-| `hasData=false` pro všechny assembly | Žádná data pro dnešek | `NO_DATA_AVAILABLE` | Zkontrolujte PND portál ručně |
-| `Login failed` | Špatné přihlašovací údaje | — | Ověřte email/heslo na portálu |
-| CEZ portál údržba | Portál-wide výpadek (login stránka jako údržba) | `PORTAL_MAINTENANCE` | Čekejte na obnovení CEZ portálu |
-| `Timeout waiting for selector` | DIP portál pomalý/nedostupný | — | Retry, portál může mít údržbu |
-| `MQTT connection refused` | Broker neběží | `MQTT_PUBLISH_ERROR` | Zkontrolujte Mosquitto add-on |
-| DIP endpoint údržba | DIP API dočasně nedostupný (400/503 nebo HTML) | `DIP_MAINTENANCE` | HDO data se přeskočí, PND běží dál |
-| HDO token selhal | Nepodařilo se získat token z DIP API | `HDO_TOKEN_ERROR` | HDO data se přeskočí, PND běží dál |
-| HDO fetch selhal | Chyba při získávání HDO signálů | `HDO_FETCH_ERROR` | HDO data se přeskočí, PND běží dál |
+Čerstvost ověřujte vůči datům portálu a uloženým intervalům. MQTT ponechává
+poslední ne-null hodnotu každé veličiny v odpovědi; skutečná nula je platná.
+Souhrnný čas posledního řádku nevypovídá o stáří každé dílčí hodnoty.
 
-### Chyba přihlášení
+Relace se ukládá do `/data/session_state.json`; při startu může být
+kvůli HDO potřeba nové přihlášení i při platných uložených cookies.
+Pauza po odmítnutí je pouze v paměti procesu a restart ji resetuje.
 
-**Symptom:** V logu add-onu se objeví `Login failed` nebo `Invalid username or password`.
+## Aktualizace, zálohy a soukromí
 
-**Řešení:**
-1. Ověřte, že se můžete přihlásit na [pnd.cezdistribuce.cz](https://pnd.cezdistribuce.cz) v prohlížeči
-2. Zkontrolujte e-mail a heslo v konfiguraci add-onu
-3. CEZ portál může mít dočasný výpadek — zkuste za několik minut
+Použijte [návod k aktualizaci a návratu](docs/pnd-consolidated-migration.md)
+a [kontrolní seznam provozu](docs/pnd-open-items.md).
+Zachovejte identitu aplikace, připojení brokeru a existující MQTT identity.
+Databáze v `/share` vyžaduje vlastní ověřenou zálohu; neodvozujte její
+zahrnutí jen z existence zálohy aplikace.
 
-### DIP timeout
+Přihlašovací údaje, cookies, databáze, EAN, ID měřidel a odpovědi portálu
+obsahují soukromá data. Při hlášení chyby posílejte verzi, bezpečné chybové
+kategorie a anonymizovaný popis; nepřikládejte nezpracované options,
+session ani produkční databázi. Logování podrobnosti potlačuje, ale není
+náhradou kontroly příloh před zveřejněním.
 
-**Symptom:** `Timeout waiting for selector` nebo `Navigation timeout` v logu.
+## Vývoj a přispívání
 
-**Řešení:**
-- CEZ portál (DIP — dip.cezdistribuce.cz) má občasné timeouty při přihlášení
-- Add-on má vestavěný retry mechanismus s timeoutem 120 sekund
-- Při opakovaném selhání restartujte add-on
-- Pokud problém přetrvává, CEZ portál pravděpodobně provádí údržbu
-
-### MQTT broker nedostupný
-
-**Symptom:** `MQTT connection refused` nebo `Connection error` v logu.
-
-**Řešení:**
-1. Ověřte, že Mosquitto broker add-on běží
-2. Zkontrolujte, že MQTT integrace je nastavena v HA
-3. Add-on vyžaduje `services: [mqtt:need]` — nespustí se bez brokeru
-
-### Senzory se nezobrazují v HA
-
-**Symptom:** Add-on běží, ale senzory nejsou viditelné.
-
-**Řešení:**
-1. Zkontrolujte log add-onu — hledejte `Published discovery` zprávy
-2. Ověřte MQTT integraci: **Nastavení → Zařízení a služby → MQTT**
-3. Zkuste `mosquitto_sub -v -t 'homeassistant/sensor/cez_pnd_#'` pro ověření discovery payloadů
-4. Restartujte MQTT integraci v HA
-
-### Session expirovala
-
-**Symptom:** Data se přestanou aktualizovat po několika hodinách.
-
-**Řešení:**
-- Add-on automaticky detekuje expirované sessions a provede re-autentizaci
-- Pokud re-auth selže, v logu se objeví zpráva `[SESSION_EXPIRED]` (WARNING) nebo `[SESSION_EXPIRED]` (ERROR při selhání)
-- Session cookies jsou uloženy v `/data/session_state.json` s TTL 6 hodin
-- PND fetch path používá POUZE Playwright browser automation (HTTP cesta odstraněna)
-
-### Žádná data / prázdný payload
-
-**Symptom:** Add-on se přihlásí, ale nezobrazí žádné hodnoty.
-
-**Řešení:**
-1. Ověřte na CEZ portálu, že data pro vaši odběrnou místo existují
-2. Zkontrolujte `electrometer_id` — auto-detekce vyžaduje alespoň jeden validní sloupec (+A, -A nebo Rv)
-3. Pro manuální nastavení ID elektroměru ho zadejte v konfiguraci add-onu
-4. Assembly `-1027` (registrové stavy) automaticky zkouší včerejší den pokud dnes nejsou data
-
-## Provoz (Operations Runbook)
-
-### Startup
-
-1. Add-on se spustí z Docker kontejneru (HA Supervisor)
-2. Přečte konfiguraci z env proměnných (`CEZ_EMAIL`, `CEZ_PASSWORD`, `MQTT_HOST`, ...)
-3. Vytvoří MQTT klienta s LWT (Last Will and Testament → `offline` při odpojení)
-4. Spustí Orchestrator polling loop
-
-### Polling cyklus (každých 15 minut)
-
-```
-1. ensure_session()     → load cookies / Playwright login pokud expirované
-2. fetch_all_assemblies → 6× PND API call (Playwright WAF warmup + form POST)
-3. CezDataParser        → parse 96 čtvrthodinových záznamů → latest reading
-4. publish_state()      → 13 PND senzorů na MQTT
-5. fetch_hdo()          → DIP API token + signals (pokud EAN nastaven)
-6. publish_hdo_state()  → 4 HDO senzory na MQTT
-7. sleep(900)           → čekání 15 minut
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements_test.txt pytest-socket
+pytest --disable-socket --allow-unix-socket
 ```
 
-**Poznámka:** PND data se fetchují POUZE přes Playwright browser automation (původní HTTP cesta byla odstraněna v T8).
+CI testuje Python 3.9–3.13, pokrytí alespoň 80 %, formátování,
+lint a typy. Zahrnuje také kontroly tajných údajů, SAST, závislostí,
+kontejneru a SBOM. Některé bezpečnostní úlohy jsou advisory;
+zelené CI není zárukou nepřítomnosti zranitelností.
 
-### Session management
+Kód je v `addon/src/`, testy v `tests/`, konfigurace v
+`addon/config.yaml`. [ROLLOUT.md](ROLLOUT.md) popisuje ověření aktualizace.
+Adresář `evidence/` uchovává historické podklady; není aktuálním návodem
+k nastavení. Nové testovací podklady používejte syntetické nebo
+anonymizované. Produkční odpovědi, přihlašovací údaje a session necommitujte.
 
-- **TTL**: 6 hodin (nebo dle `expires` atributu cookies)
-- **Uložení**: `/data/session_state.json` (persisted přes Docker restart)
-- **Auto-reauth**: Orchestrátor volá `ensure_session()` na začátku každého cyklu
-- **Manuální reset**: Smazat `/data/session_state.json` a restartovat add-on
-
-### Rollback
-
-1. Zastavte add-on v HA UI
-2. V případě problémů s novou verzí — přepněte git tag/branch na předchozí verzi
-3. Rebuild Docker image: `docker build -t local/cez-pnd addon/`
-4. Spusťte add-on znovu
-
-### Monitoring — klíčové log zprávy
-
-| Zpráva | Význam |
-|--------|--------|
-| `Orchestrator starting` | Add-on startuje, polling loop začíná |
-| `Published discovery` | MQTT Discovery konfigurace odeslána |
-| `Published state` | Senzor hodnoty publikovány |
-| `[SESSION_EXPIRED]` (WARNING) | Session expirovala, probíhá re-auth (automatické) |
-| `[SESSION_EXPIRED]` (ERROR) | Re-auth selhal, cyklus se přerušuje |
-| `[PORTAL_MAINTENANCE]` | CEZ portál-wide údržba, celý cyklus přeskočen |
-| `[DIP_MAINTENANCE]` | DIP endpoint údržba, HDO přeskočeno, PND běží dál |
-| `[HDO_TOKEN_ERROR]` | DIP token selhal, HDO přeskočeno, PND běží dál |
-| `[HDO_FETCH_ERROR]` | HDO signály selhaly, HDO přeskočeno, PND běží dál |
-| `[CEZ_FETCH_ERROR]` | Fetch z PND API selhal (retry probíhá) |
-| `[MQTT_PUBLISH_ERROR]` | MQTT broker nedostupný |
-| `MQTT publisher stopped` | Add-on se vypíná, availability → offline |
-
-### Chování při údržbě a výpadcích
-
-Add-on má inteligentní zpracování různých typů výpadků:
-
-| Marker | Zdroj | Ovlivňuje | Chování |
-|--------|-------|-----------|---------|
-| `SESSION_EXPIRED` (WARNING) | PND session expired (302) | PND | Auto-reauth, retry, pokračuje |
-| `SESSION_EXPIRED` (ERROR) | Re-auth selhal | PND | Cyklus přerušen, příští cyklus zkusí znovu |
-| `PORTAL_MAINTENANCE` | CEZ portál login page jako údržba | VŠE | Celý cyklus přeskočen (PND + HDO) |
-| `DIP_MAINTENANCE` | DIP endpoint 400/503 nebo HTML | Pouze HDO | HDO přeskočeno, PND data běží dál |
-| `HDO_TOKEN_ERROR` | DIP token endpoint selhal | Pouze HDO | HDO přeskočeno, PND data běží dál |
-| `HDO_FETCH_ERROR` | HDO signals fetch selhal | Pouze HDO | HDO přeskočeno, PND data běží dál |
-| `ENDPOINT_UNAVAILABLE` | PND/DIP 5xx nebo síťová chyba | PND nebo HDO | Retry nebo abort podle typu |
-
-**Klíčové rozlišení:**
-- `PORTAL_MAINTENANCE` → Znamená, že CEZ portál je DOWN (login údržbem) → nic nefunguje
-- `DIP_MAINTENANCE` → Znamená, že jen DIP endpoint má výpadek → PND data stále fungují
-- `HDO_TOKEN_ERROR` vs `HDO_FETCH_ERROR` → Token selhal vs signals selhaly → stejný výsledek (HDO přeskočeno)
-
-## Vývoj
-
-### Spuštění testů
-
-```bash
-python3 -m pytest tests/ --no-cov -q
-```
-
-### Spuštění s coverage
-
-```bash
-python3 -m pytest tests/ -q
-```
-
-### Struktura projektu
-
-```
-addon/
-  config.yaml              # HA add-on konfigurace (arch, options, services)
-  src/
-    __init__.py
-    main.py                # Entry point, PndFetcher (Playwright WAF warmup + form POST)
-    auth.py                # Playwright autentizace (DIP login, iframe, cookies)
-    session_manager.py     # Session persistence (6h TTL, /data/session_state.json)
-    orchestrator.py        # Polling loop, 6 assemblies, retry, reauth, maintenance handling
-    parser.py              # CezDataParser (96 záznamů → latest reading)
-    dip_client.py          # DipClient (aiohttp → HDO token + signals)
-    mqtt_publisher.py      # MQTT Discovery (17 senzorů) + state publishing
-    hdo_parser.py          # HDO signals parser (tarif, schedule, přepnutí)
-    cookie_utils.py        # Playwright cookies → aiohttp header konverze (pro DIP/HDO)
-tests/
-    test_auth_session.py        # Auth/session unit testy
-    test_cez_parser.py          # Parser testy (96 záznamů, edge cases)
-    test_cookie_utils.py        # Cookie konverze testy
-    test_dip_client.py          # DIP API client testy
-    test_e2e_smoke.py           # E2E smoke test celého pipeline
-    test_hdo_parser.py          # HDO parser testy
-    test_invalid_credentials.py # Negativní cesty (invalid auth, stale state)
-    test_live_verify_rules.py   # Live verification rules testy
-    test_mqtt_discovery.py      # MQTT Discovery payload testy
-    test_pnd_fetcher.py         # PndFetcher testy (Playwright WAF warmup)
-    test_runtime_orchestrator.py # Orchestrator lifecycle testy (maintenance handling)
-scripts/
-    live_verify_flow.py    # Kanonický live verifikační skript
-    live_verify_rules.py   # Verifikační pravidla
-    smoke_test.sh          # Smoke test shell skript
-evidence/
-    poc-summary.md         # PoC výsledky a architektura rozhodnutí
-    poc-comparison.md      # Srovnání autentizačních přístupů
-    poc-results/           # Výsledky jednotlivých PoC experimentů
-    live-fetch/            # Live fetch výsledky (JSON payloady)
-    pnd-playwright-data.json    # Vzorový payload z CEZ PND
-    playwright-auth-success.png # Screenshot úspěšného přihlášení
-```
-
-## Přispívání (Contributor Policy)
-
-### Co se commituje
-
-- Produkční kód v `addon/src/`
-- Testy v `tests/` (každý modul má odpovídající test)
-- Evidence v `evidence/` (PoC výsledky, live fetch data)
-- Skripty v `scripts/` (pouze kanonické — live verify, smoke test)
-
-### Co se NEcommituje
-
-- `*.backup*`, `*.bak*` — dočasné zálohy (v `.gitignore`)
-- `test_*.py` v root adresáři — ad-hoc debug testy (v `.gitignore`)
-- Debug skripty v `scripts/test_*` — jednorázové experimenty
-- `__pycache__/`, `.pytest_cache/` — build artefakty
-
-### Evidence retention policy
-
-- `evidence/live-fetch/` — **VŽDY zachovat** (produkční verifikace)
-- `evidence/poc-results/` — **Zachovat** (referováno z `poc-summary.md`)
-- `.sisyphus/evidence/` — Plánové evidence (zachovat do uzavření plánu)
-
-### Debug script lifecycle
-
-```
-Vytvoření → Testování → Zachycení evidence → Smazání
-```
-
-Nikdy necommitujte debug skripty do hlavní větve. Výsledky zachyťte jako evidence v `evidence/`.
-
-## Více odběrných míst a elektroměrů
-
-Integrace podporuje **více než jedno odběrné místo** (delivery point) a **více elektroměrů**
-s vazbou každého elektroměru na konkrétní odběrné místo.
-
-- Každé odběrné místo je identifikováno svým EAN a může mít přiřazen jeden či více elektroměrů.
-- Hodnoty z jednotlivých elektroměrů jsou agregovány na úroveň odběrného místa a zároveň
-  zůstávají dostupné per-elektroměr pro detailní evidenci.
-- Konfigurace umožňuje sledovat dvě odběrná místa současně (např. domácnost + fotovoltaika)
-  v rámci jedné instance integrace.
-
-> Změnový požadavek CPI-10 — rozšíření integrace na 2 odběrná místa a podporu více elektroměrů
-> s vazbou na odběrné místo.
-
-## Licence
-
-MIT
+Historie změn je v [changelogu](addon/CHANGELOG.md).
+Projekt je dostupný pod [licencí MIT](LICENSE).
