@@ -103,8 +103,7 @@ async def test_external_cancellation_also_cleans_up_poll_task():
 @pytest.mark.skipif(sys.platform == "win32", reason="Production uses POSIX SIGTERM")
 def test_real_sigterm_wakes_idle_main_and_completes_cleanup():
     """The signal must wake a selector with no active I/O or poll timer."""
-    program = textwrap.dedent(
-        """
+    program = textwrap.dedent("""
         import asyncio
         import os
         import signal
@@ -142,8 +141,7 @@ def test_real_sigterm_wakes_idle_main_and_completes_cleanup():
         auth.close.assert_awaited_once()
         publisher.stop.assert_called_once()
         print("cleanup-complete")
-        """
-    )
+        """)
     result = subprocess.run(
         [sys.executable, "-c", program],
         capture_output=True,
