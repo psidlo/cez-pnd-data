@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Document current configuration, MQTT identities and availability, HDO timing, archive setup, data quality, backup and upgrade procedures as user guides.
+- Add in-app documentation and correct unsupported claims about automatic meter discovery, supply-point aggregation and HDO entity domains.
+
 ## 0.4.9 — 2026-11-17
 
 Consolidated fork release preparation, corresponding to the validated local
@@ -12,7 +17,7 @@ release history is reconstructed for them.
 - Initialize DIP dashboard authorization before opening HDO details; bootstrap and validate the request token without exposing tokens or private responses.
 - Distinguish wrapped authorization failures from portal maintenance. Select the current Europe/Prague schedule and include a UTC offset in the next-switch timestamp.
 - Preserve existing MQTT sensor domains, topics, unique IDs and last-known display values across null response rows. Remove invalid discovery classes without guessing a conversion for legacy Rv.
-- Preserve normal completed-day PND queries and local polling compatibility. Reject unsafe/unknown archive view migrations and conflicting import/export metadata.
+- Retain ordinary current-day PND queries with a daily-register fallback to yesterday and local polling compatibility. Reject unsafe/unknown archive view migrations and conflicting import/export metadata.
 - Cancel polling and wake the idle asyncio selector on SIGTERM so MQTT, browser and archive cleanup completes.
 - Suppress credentials, private response bodies and identifying configuration values in diagnostics.
 

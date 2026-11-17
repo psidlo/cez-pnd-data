@@ -1,85 +1,72 @@
-# Consolidated PND repair and optional archive
+# Aktualizace a návrat
 
-This is the combined replacement for fork drafts #1–#6 and #11, reviewed against
-upstream main f1b2e3f47890eef191cfd2163a6f297968af4cd2 (still current on 2026-11-16).
-It includes the previously tested integration preview and the missing MQTT
-network-loop fix. Its runtime was deployed and validated as local 0.4.9 on
-2026-11-17; the public fork remains in PR #2 for review. The public manifest
-and private local installation have different identities.
+Tento postup platí pro aplikaci CEZ PND a její volitelný SQLite archiv.
+Všechna [nastavení a význam senzorů](../README.md) ověřte před změnou
+zdrojů nebo konfigurace.
 
-## Resulting behavior
+## Před aktualizací
 
-- Paho runs its network thread, waits for CONNACK, restores retained discovery
-  and per-meter online status on reconnect, and drains outgoing publications
-  before disconnecting/stopping the thread. Paho 2.x is required by the existing
-  VERSION2 callback API. Unexpected connection loss still uses the original
-  first-meter-only LWT; multi-meter atomic availability is not claimed.
-- Discovery keeps all sensor unique IDs, domains and state/availability topics.
-  The legacy Rv column retains the source's kW unit and unchanged numeric values;
-  its incompatible reactive_power class is removed. Physical Rv interpretation
-  is unresolved, so no unverified conversion to var/kvar is made. HDO ON/OFF
-  remains the existing sensor, with the invalid binary_sensor class removed.
-  No retained configuration is deleted and no binary-domain migration occurs.
-- Optional SQLite history remains disabled by default. When enabled it shares
-  the authenticated client, uses explicit Prague calendar days, includes the
-  final midnight endpoint, preserves missing/ambiguous data and applies guarded
-  known-legacy view migration. Unknown view definitions are refused.
-- Legacy external-broker options, separate archive meter selection and separate
-  import/export EANs are preserved. Never infer both EANs from the generic ean.
-  Existing metadata conflicts stop the affected archive meter.
-- Portal rejection aborts historical requests and activates process-local
-  cooldown. A restart resets that cooldown. Archive work is serial and shares a
-  global daily-request budget; a large budget can delay normal polling.
-- Private response/exception details are suppressed in logs. Missing HDO tokens
-  now bootstrap through the authenticated page's DIP token endpoint instead of
-  waiting 30 seconds for Angular to populate localStorage. The portal's wrapped
-  JSON-string response is unwrapped, validated and passed to the signals request.
-  Token values and private responses are never logged. Rejected/HTML/invalid
-  token responses fail closed. Production HDO authorization and accepted zoned
-  timestamps were verified during the 2026-11-17 local deployment.
+1. Zaznamenejte přesnou revizi zdrojů nebo obrazu, slug aplikace, boot režim,
+   watchdog, výběr elektroměrů a nastavení brokeru. Soukromé hodnoty
+   uchovávejte mimo veřejný repozitář.
+2. Ověřte dostupné PND a HDO hodnoty, MQTT témata/unique ID a konzumenty
+   (dashboardy, automatizace, SQL dotazy). Online stav neprokazuje čerstvost.
+3. Pořiďte zálohu zdrojů, konfigurace a aplikačních dat. Je-li archiv
+   používán, zahrňte jeho skutečný obsah v `/share/cez_pnd/`; samotná
+   záloha aplikace nemusí sdílený adresář zahrnovat.
+4. Pro SQLite použijte backup API nebo konzistentní kopii se zastavenými
+   všemi zapisovači. Při studené kopii uchovejte související WAL/SHM soubory.
+   Zálohu ponechte nedotčenou a obnovu/migraci vyzkoušejte na pracovní kopii.
 
-## Configuration and downstream compatibility
+## Identita instalace a MQTT
 
-Public addon/config.yaml retains upstream slug cez-pnd and uses version 0.4.9.
-It is not a drop-in manifest for a local cez-pnd-external installation (upgraded
-from local 0.4.8 to 0.4.9 on 2026-11-17).
-For a controlled local update, preserve that installation's manifest identity,
-boot setting and private options; overlay reviewed runtime files and add archive
-schema/options without copying private defaults into Git. No parallel publisher.
+Manifest v `addon/config.yaml` používá slug `cez-pnd`. Místní instalace
+může mít jinou identitu, například `cez-pnd-external`. Pro takovou instalaci
+zachovejte její manifestovou identitu a soukromé nastavení; veřejný manifest
+nekopírujte bez úpravy přes místní identitu.
 
-Archive options: archive_enabled (default false), archive_start_date (YYYY-MM-DD),
-archive_days_per_cycle (1–62, default 1), archive_meter_ids (JSON string list),
-import_ean/export_ean (separate optional metadata). Normal MQTT meters remain
-independent. External broker options remain mqtt_host/port/user/password.
+Aktualizujte jednu existující instanci. Druhý publisher se stejnými ID
+vytváří kolidující discovery a stavy. Stejné ID elektroměru používá stejné
+MQTT identity v režimu jednoho měřidla i v seznamu `electrometers`.
+Změna ID je změna identity senzoru, nikoli automatická migrace historie.
 
-No changes are required to Predbat, SolaX, the price archive or existing SQL
-consumers: the database path and pnd_combined_15m contract are preserved. Actual
-entity identity and SQL compatibility were verified for the local 2026-11-17
-cutover and must be checked again for any other deployment.
+Stávající HDO ON/OFF entita je `sensor`. Témata dostupnosti jsou
+`cez_pnd/{meter_id}/availability`; neupravujte je na společné téma.
+Před změnou jednotek Ri/Rc nebo významu Rv ověřte skutečnou zdrojovou
+sestavu a návazné statistiky; nepoužívejte neověřený přepočet.
 
-## Controlled deployment and rollback
+## Aktualizace a ověření
 
-1. Obtain explicit approval before changing the installed add-on or database.
-   Refresh source hashes/options privately; version equality is insufficient.
-2. Back up the add-on and use SQLite backup API or a consistent stopped snapshot
-   including WAL data. Record current per-meter row/quality counts and integrity.
-3. Test a copy offline. Preserve local slug and options; start only the replacement,
-   archive disabled. Confirm normal PND and stable MQTT beyond three minutes,
-   then verify reconnect. Confirm existing sensor identities and HDO isolation.
-4. With approval, enable archive at 1–2 days per cycle. Validate metadata, guarded
-   view migration, quality and interval-end interpretation against the baseline.
-5. Roll back on MQTT identity loss, SQL/quality regression or portal rejections.
-   Restore original source/options; restore the DB only if affected, preserving
-   any newer successful measurements. Never replace gaps with zero.
+1. Zastavte pouze aplikaci CEZ PND a ověřte, že neběží jiný zapisovač
+   její databáze. Aktualizujte zdroje nebo obraz se zachováním identity.
+2. Pro první ověření ponechte `archive_enabled: false`. Zkontrolujte
+   připojení MQTT, discovery, běžný PND cyklus a HDO (pokud je nastavena EAN).
+3. Sledujte dostupnost alespoň tři minuty i další běžné cykly. Ověřte
+   korektní restart aplikace, návrat online a zachování entit.
+   Sdílený MQTT broker kvůli tomuto testu nerestartujte.
+4. Pro archiv ověřte výběr měřidel, datum a metadata import/export.
+   Zapněte archiv s `archive_days_per_cycle: 1`.
+5. Po skutečném archivním cyklu ověřte integritu, zachování původních
+   řádků a metadat, kvality, nejnovější pokusy a délku celého cyklu.
+   Nezaměňujte úspěšný dotaz s úplností profilu.
 
-## Validation
+Archiv přijme jen známou definici pohledu `pnd_combined_15m`; neznámé
+schéma nebo rozpor EAN vyžaduje kontrolu, nikoli vynucené přepsání.
+Podrobnosti jsou v [návodu k archivu](archive.md).
 
-The single inherited CI workflow now covers Python 3.9–3.13, keeps 80% coverage,
-blocks external sockets during synthetic tests, and retains lint/type, secrets,
-SAST, dependency audit, Docker/Trivy and SBOM jobs. Redundant fork-only workflow
-is removed. Advisory security jobs retain their inherited advisory status; a
-successful run does not establish a vulnerability-free production deployment.
+## Kdy a jak se vrátit
 
-## Verified HDO authorization refinement (2026-11-17)
+Při ztrátě identity, chybě MQTT, nesouladu metadat, poškození databáze
+nebo zhoršení načítání zastavte CEZ PND a nejprve uchovejte stav po změně
+pro diagnostiku. Vraťte původní obraz/zdroje a konfiguraci stejné aplikace.
 
-The main DIP dashboard must initialize backend authorization before the detail page. Production diagnosis distinguished HTTP 400 wrapping statusCode=401 from maintenance; visiting the dashboard then yielded a token and HTTP 200 signals. The final client uses a bounded initialization wait with explicit API fallback. Dated schedules select the Prague-local day and next-switch timestamps include the UTC offset. Current operational acceptance results are maintained in PR #2.
+Databázi obnovujte jen tehdy, pokud je to potřebné. Zjistěte, která nová
+měření by obnova odstranila, a uchovejte je předem. Obnovujte konzistentní
+celek do čistého cíle se zastavenými zapisovači; nekombinujte starou DB
+s novým WAL. Neobnovujte plošně HA ani sdílené soubory kvůli jedné aplikaci.
+
+Po návratu ověřte boot/watchdog, MQTT a další cykly. Při odmítnutí ČEZ
+respektujte dvanáctihodinovou pauzu: restart ji resetuje a není prostředkem,
+jak opakovat blokované dotazy.
+
+Úplný [kontrolní seznam](pnd-open-items.md) platí pro každou instalaci.
