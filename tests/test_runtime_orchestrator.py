@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
+
 from addon.src.orchestrator import (
     ASSEMBLY_CONFIGS,
     CEZ_FETCH_ERROR,

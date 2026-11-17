@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
+
 from addon.src.auth import AuthSession, PlaywrightAuthClient
 from addon.src.mqtt_publisher import (
     AVAILABILITY_TOPIC_TEMPLATE,

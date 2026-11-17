@@ -5,6 +5,8 @@ import json
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
 from addon.src.dip_client import (
     DipClient,
     DipFetchError,
@@ -12,7 +14,6 @@ from addon.src.dip_client import (
     DipTokenError,
     _safe_token_diagnostics,
 )
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 
 def _mock_page(

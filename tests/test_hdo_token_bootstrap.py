@@ -5,6 +5,7 @@ import shutil
 import subprocess
 
 import pytest
+
 from addon.src.dip_client import TOKEN_BOOTSTRAP_JS
 
 NODE = shutil.which("node")

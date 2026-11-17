@@ -13,6 +13,7 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 
 import pytest
+
 from addon.src.hdo_parser import (
     HdoData,
     _find_next_switch,
